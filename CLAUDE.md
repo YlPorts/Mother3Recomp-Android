@@ -17,7 +17,8 @@ Bash sandbox forces `TEMP=C:\Windows`, which breaks `cc1plus`).
 ## Game-specific rules
 
 1. **The decomp is a reference, not an oracle.** `pret/pokeemerald` is
-   imported through `tools/import_decomp_symbols/` and only its symbol
+   imported through `tools/decomp/import-symbols.sh` (which drives the
+   engine's shared importer) and only its symbol
    names, function boundaries, and ROM-layout annotations enter this
    project. Its C source / build output / toolchain never do.
 2. **mGBA is the oracle.** When the recompiled build differs from mGBA,
