@@ -71,12 +71,13 @@ fixed/initial view-width request, a 576-pixel framebuffer capacity, a read-only
 OBJ margin layer, and the
 same frame-policy callback in TCP and normal execution. Game capability limits
 still apply. Disabling Emerald's feature overrides stale CLI/environment view
-requests. Source branches are `experiment/emerald-adaptive-widescreen` in this
-repository and `experiment/mod-view-settings` in the engine checkout.
+requests. The v0.0.5 release integrates these changes into `main` in both this
+repository and the engine. Its engine and launcher gitlinks pin published
+dependency revisions.
 
 ## Reproduction and validation
 
-Build with the matching engine experiment checkout; no ROM regeneration is
+Build with the pinned engine checkout; no ROM regeneration is
 needed for this presentation change:
 
 ```powershell
@@ -137,3 +138,12 @@ memory, and the updated real window was captured with the NPC visibly present
 while walking left. `emerald_view_capture_check <capture> <ROM> 569
 --require-visible-objects` makes zero final NPC pixels a test failure for these
 fixtures. Portrait expansion is tracked separately and is not in v0.0.5.
+
+Release artifact validation (2026-09-14): the extracted Windows ZIP passed a
+720-frame 32:9 left/right run using its bundled toolchain, with 90 unchanged
+native center comparisons, 10 matching guest memory checkpoints, and fully
+static coverage. All six real-window resize cases passed against that same
+shipped executable. The production mod installer accepted the separate
+`.gbamod`, kept it disabled by default, and committed the enabled 32:9 option.
+Both archives passed CRC and content checks; neither includes ROMs, BIOS,
+saves, or local settings. The release includes `SHA256SUMS.txt` for both assets.
