@@ -23,6 +23,7 @@
 
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "emerald_extended_view.h"
 
 extern "C" void gf_ReadFlash1(void);
 extern "C" void gf_ReadFlash_Core(void);
@@ -122,6 +123,15 @@ int main(int argc, char** argv) {
     // launcher's GAME card uses it for its "ROM verified" check.
     opts.builtin_rom_crc32 = GBARECOMP_BUILTIN_CRC32;
     opts.mod_game_id       = "pokemon-emerald-us";
+    opts.mod_owns_adaptive_view = true;
+    opts.max_view_width = emerald::kMaxViewWidth;
+    opts.max_resize_view_width = emerald::kMaxViewWidth;
+    opts.resize_driven_view = true;
+    opts.freely_resizable_window = true;
+    opts.extended_view_init = emerald::install_extended_view;
+    opts.extended_view_frame = emerald::update_extended_view;
+    opts.launcher_expose_widescreen = false;
+    opts.launcher_expose_adaptive_view = false;
     opts.launcher_region   = (sizeof(GBARECOMP_BUILTIN_REGION) > 1)
                                  ? GBARECOMP_BUILTIN_REGION
                                  : nullptr;

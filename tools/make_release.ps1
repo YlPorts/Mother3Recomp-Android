@@ -47,7 +47,7 @@ $dlls = @('SDL2.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.
 # through the msys2 mingw64 prefix - passed explicitly so a fresh checkout
 # configures without relying on auto-detection.
 if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
-  & cmake -S $root -B $build -G Ninja `
+  & "$MingwBin\cmake.exe" -S $root -B $build -G Ninja `
       -DCMAKE_C_COMPILER="$MingwBin/cc.exe" `
       -DCMAKE_CXX_COMPILER="$MingwBin/c++.exe" `
       -DCMAKE_MAKE_PROGRAM="$MingwBin/ninja.exe" `
@@ -61,7 +61,7 @@ if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
 
 foreach ($g in $games) {
   $target = $g.Target
-  & cmake --build $build --target $target
+  & "$MingwBin\cmake.exe" --build $build --target $target
   if ($LASTEXITCODE -ne 0) { throw "build failed for $target ($LASTEXITCODE)" }
 
   $exe = Join-Path $build "$target.exe"
@@ -70,7 +70,12 @@ foreach ($g in $games) {
 
   $stageName = "$target-windows-x64-v$Version"
   $stage = Join-Path $out $stageName
-  if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+  $stageFull = [IO.Path]::GetFullPath($stage)
+  $outPrefix = [IO.Path]::GetFullPath($out).TrimEnd('\') + '\'
+  if (-not $stageFull.StartsWith($outPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Release stage escapes output directory: $stageFull"
+  }
+  if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force }
   New-Item -ItemType Directory -Force $stage | Out-Null
 
   Copy-Item $exe $stage
@@ -90,11 +95,14 @@ foreach ($g in $games) {
   # copy. The launcher seam resolves the catalog at <exe>/mods, so without
   # this the shipped archive has an empty Mods page even though a local build
   # works. Data only -- no ROM-derived content.
-  $mods = Join-Path $build 'mods'
+  # Use the checked-in catalog, never a build directory's remembered user
+  # selections or private asset paths. Features ship at their default state.
+  $mods = Join-Path $root 'mods\preloaded'
   if (-not (Test-Path (Join-Path $mods 'packages'))) {
     throw "Mod catalog missing: $mods (build with GBARECOMP_ENABLE_MODS=ON)"
   }
-  Copy-Item $mods -Destination $stage -Recurse
+  Copy-Item -LiteralPath $mods -Destination (Join-Path $stage 'mods') -Recurse
+  Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $stage
   # Bundle the self-contained tcc overlay toolchain (TinyCC + overlay shim
   # headers) next to the exe so a toolchain-less player box self-heals overlay
   # gaps via tcc (overlay backend auto -> tcc). See gbarecomp/tools/fetch_tcc.ps1.
@@ -117,7 +125,8 @@ for your ROM (and, on first run, your GBA BIOS), then the game window.
 
 Static recompilation turns the game's ARM7TDMI code into native C++ (via the
 [gbarecomp](https://github.com/mstan/gbarecomp) framework); the rest of the GBA
-(PPU, APU, DMA, timers, BIOS HLE) runs through the framework's runner core.
+(PPU, APU, DMA and timers) runs through the framework's runner core. The real
+GBA BIOS is recompiled and executed; supply your own BIOS dump.
 
 ## How to run
 
@@ -129,6 +138,14 @@ Static recompilation turns the game's ARM7TDMI code into native C++ (via the
    save data lands next to the exe.
 
 The ROM and BIOS are **never** redistributed - supply your own dumps.
+
+## Widescreen mod
+
+Open **Mods**, enable **Overworld Widescreen (Experimental)**, and choose
+**Fit to window**, **16:9**, **21:9** or **32:9**. Apply the selection and play.
+The feature ships disabled and preserves native gameplay and save data.
+It expands scenery and live NPCs; distant object spawning, field effects and
+vertical/portrait expansion remain outside this experimental version.
 
 See the GitHub release notes for what changed in v$Version.
 "@ | Out-File (Join-Path $stage 'README.md') -Encoding utf8
@@ -162,7 +179,7 @@ See the GitHub release notes for what changed in v$Version.
               throw "Refusing to archive a file outside the release stage: $rzFull"
           }
           $rzName = $rzFull.Substring($rzPrefix.Length).Replace('\', '/')
-          if ($rzName.StartsWith('/') -or $rzName -match '(^|/)..(/|$)') {
+          if ($rzName.StartsWith('/') -or $rzName -match '(^|/)\.\.(/|$)') {
               throw "Unsafe ZIP entry name: $rzName"
           }
           [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
@@ -180,7 +197,7 @@ See the GitHub release notes for what changed in v$Version.
       $rzBad = @($rzArchive.Entries | Where-Object {
           $_.FullName.Contains('\') -or
           $_.FullName.StartsWith('/') -or
-          $_.FullName -match '(^|/)..(/|$)'
+          $_.FullName -match '(^|/)\.\.(/|$)'
       })
       if ($rzBad.Count -ne 0) {
           throw "ZIP contains non-portable entry names: $(

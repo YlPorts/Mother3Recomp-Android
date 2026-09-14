@@ -38,6 +38,16 @@ add_subdirectory("${GBARECOMP_ROOT}" gbarecomp_build EXCLUDE_FROM_ALL)
 
 add_executable(verify_rom_hash tools/verify_rom_hash/main.cpp)
 
+enable_testing()
+add_executable(emerald_extended_view_test
+    tests/extended_view_test.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp)
+target_include_directories(emerald_extended_view_test PRIVATE src "${GBARECOMP_ROOT}/src/gba")
+add_test(NAME emerald_extended_view_test COMMAND emerald_extended_view_test)
+add_executable(emerald_view_capture_check
+    tools/widescreen_capture_check.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp)
+target_include_directories(emerald_view_capture_check PRIVATE src "${GBARECOMP_ROOT}/src/gba")
+target_link_libraries(emerald_view_capture_check PRIVATE gbarecomp_gba)
+
 # add_gba_variant(<target> <name> <port> <win_title> <game_name> <sha1>
 #                  <crc32>)
 function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32)
@@ -54,6 +64,9 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
     set(VARIANT_GAME_SOURCES src/main.cpp)
     if(GBARECOMP_ENABLE_MODS)
         list(APPEND VARIANT_GAME_SOURCES
+            src/emerald_extended_view.cpp
+            src/emerald_object_view.cpp
+            src/mods/emerald_adaptive_view_plugin.cpp
             src/mods/emerald_absolute_rtc_plugin.cpp)
     endif()
     add_executable(${TARGET}
