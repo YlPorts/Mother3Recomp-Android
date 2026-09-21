@@ -10,14 +10,21 @@ choose **Fit to window**, **16:9**, **21:9** or **32:9**, then apply and play.
 The package is already bundled with v0.0.6. The separate `.gbamod` archive can
 also be installed through the launcher's mod installer. It starts disabled.
 
-This expands overworld scenery and live NPCs at the original pixel scale.
+This expands overworld scenery and NPCs at the original pixel scale.
 Native gameplay and saves are preserved. The renderer
 fills portrait windows in Fit mode, retains scenery during door
-animations, and anchors overworld menus to the viewport edges. The released
+animations, keeps connected-map scenery visible across route boundaries,
+and anchors overworld menus to the viewport edges. The released
 v0.0.5 executable supports horizontal expansion only and cannot enable this
 package's newer renderer. Update the game executable as well as the mod.
 Battles and unsupported scenes remain centered at their native 3:2 aspect.
-Distant NPC spawning and special field effects are not expanded.
+Unloaded NPCs in the current and connected maps remain visible as idle poses
+at their map or last observed positions. Walking, trainer activation and
+scripts keep the game's normal active area. Story flags and live actors take
+precedence; special field effects and disguised actors are not expanded.
+Neighboring scenery uses compatible tilesets already loaded by the game;
+NPC previews likewise require a compatible resident palette. No extra actors
+are inserted into the game's simulation.
 
 No ROM, BIOS, save, game graphics or native library is included in this package.
 Licensed under PolyForm Noncommercial 1.0.0; see LICENSE in this package.

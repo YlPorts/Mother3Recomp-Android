@@ -6,6 +6,7 @@
 #include "mod_runtime.h"
 #include "runtime.h"
 #include "runtime_bus_bridge.h"
+#include "runtime_arm.h"
 
 #include <cstdio>
 #include <cstring>
@@ -19,6 +20,7 @@ UiView ui;
 bool last_objects_ready = true;
 bool enabled = false;
 ViewStatus last_status = ViewStatus::Native;
+unsigned long long last_state_epoch = 0;
 
 int tile_provider(int bg, int x, int y, std::uint16_t* entry) {
     return view.tile(bg, x, y, entry) ? gba::kWsTilemapReplace : gba::kWsTilemapUnavailable;
@@ -45,7 +47,8 @@ void reset_extended_view() {
     enabled = false;
     view = FieldView{};
     ui = UiView{};
-    // prepare clears every frame; removing the hook also invalidates a reset.
+    objects = ObjectView{};
+    last_state_epoch = g_runtime_state_epoch;
     last_objects_ready = true;
     last_status = ViewStatus::Native;
     if (gba::g_ws_tilemap_provider == tile_provider) {
@@ -77,6 +80,10 @@ void update_extended_view(const gbarecomp::ExtendedViewFrameInfo* frame) {
     if (!enabled || !frame) return;
     auto* bus = gbarecomp::active_bus();
     if (!bus) return;
+    if (last_state_epoch != g_runtime_state_epoch) {
+        objects = ObjectView{};
+        last_state_epoch = g_runtime_state_epoch;
+    }
     const ViewMemory memory{bus->ewram_ptr(), bus->iwram_ptr(), bus->rom_ptr(),
                            bus->rom_size(), bus->vram_ptr(), frame->io,
                            bus->oam_ptr(), bus->pal_ptr()};

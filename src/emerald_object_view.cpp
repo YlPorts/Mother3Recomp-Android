@@ -18,18 +18,159 @@ int unwrap(int raw, int reference, int modulus) {
 constexpr int widths[3][4] = {{8,16,32,64},{16,32,32,64},{8,8,16,32}};
 constexpr int heights[3][4] = {{8,16,32,64},{8,8,16,32},{16,32,32,64}};
 struct Part { int x, y; unsigned a0, a1, a2; };
+unsigned identity(unsigned group, unsigned map, unsigned local) {
+    return group * 65536 + map * 256 + local;
+}
+}
+
+void ObjectView::dormant(const ViewMemory& m, const FieldView& field) {
+    const auto save = m.u32(0x03005D8C);
+    if (!m.bytes(save, 0x159c) || !field.map_count()) return;
+    const auto tick = m.u32(0x030022E0);
+    if (tick - last_tick_ > 3) poses_.clear(); // rewind, load or skipped scene
+    last_tick_ = tick;
+    const auto visible_map = [&](unsigned group, unsigned number) -> const FieldMapRegion* {
+        for (int i = 0; i < field.map_count(); ++i)
+            if (field.map(i).group == group && field.map(i).number == number) return &field.map(i);
+        return nullptr;
+    };
+    for (auto it = poses_.begin(); it != poses_.end();) {
+        if (!visible_map(it->first >> 16, (it->first >> 8) & 255)) it = poses_.erase(it);
+        else ++it;
+    }
+    // Preserve positions across software despawns and connected-map handoffs.
+    // Active identities (including explicitly hidden actors) always suppress
+    // templates, so neither duplicates nor story-hidden actors are introduced.
+    std::array<unsigned, 16> active{};
+    int active_count = 0;
+    for (int i = 0; i < 16; ++i) {
+        const auto* o = m.bytes(kObjects + i * 36, 36);
+        if (!o || !(o[0] & 1) || (o[2] & 1)) continue;
+        const auto key = identity(o[10], o[9], o[8]);
+        active[active_count++] = key;
+        const auto* region = visible_map(o[10], o[9]);
+        const auto* s = o[4] < 64 ? m.bytes(kSprites + o[4] * 68, 68) : nullptr;
+        const auto info = m.u32(0x08505620 + o[5] * 4);
+        const auto* gfx = m.bytes(info, 36);
+        if (!region || !s || !(s[62] & 1) || !gfx || o[5] >= 239) continue;
+        const int w = s16(gfx+8), h = s16(gfx+10);
+        if (w < 8 || h < 8 || w > 64 || h > 64) continue;
+        int x = s16(s+32) + s16(s+36) + s8(s[40]);
+        int y = s16(s+34) + s16(s+38) + s8(s[41]);
+        if (s[62] & 2) {
+            x += static_cast<std::int16_t>(m.u16(kOffsetX));
+            y += static_cast<std::int16_t>(m.u16(kOffsetY));
+        }
+        if (!(o[1] & 0x40)) {
+            x = unwrap(u16(s+2) & 511, x, 512);
+            y = unwrap(u16(s) & 255, y, 256);
+        }
+        if (poses_.size() < 256 || poses_.count(key))
+            poses_[key] = {x + w/2 + field.origin_x() - region->x*16,
+                           y + h + field.origin_y() - region->y*16,
+                           s16(o+12) - region->x, s16(o+14) - region->y,
+                           o[5], unsigned(o[24] & 15), bool(o[1] & 0x20)};
+    }
+    const auto hidden_flag = [&](unsigned flag) {
+        if (!flag) return false;
+        const std::uint8_t* byte = nullptr;
+        if (flag < 0x960) byte = m.bytes(save + 0x1270 + flag/8, 1);
+        else if (flag >= 0x4000 && flag < 0x4080) byte = m.bytes(0x020375FC + (flag-0x4000)/8, 1);
+        return !byte || (*byte & (1 << (flag & 7))) != 0;
+    };
+    for (int r = 0; r < field.map_count(); ++r) {
+        const auto& region = field.map(r);
+        const auto events = m.u32(region.header + 4);
+        const auto* event_header = m.bytes(events, 8);
+        if (!event_header || event_header[0] > 64) continue;
+        // Current-map scripts may move/replace templates in the save block.
+        const auto templates = r == 0 ? save + 0xC70 : m.u32(events + 4);
+        const auto* all = m.bytes(templates, event_header[0] * 24);
+        if (!all) continue;
+        for (unsigned i = 0; i < event_header[0]; ++i) {
+            const auto* t = all + i*24;
+            const unsigned key = identity(region.group, region.number, t[0]);
+            if (!t[0] || t[0] == 255 || t[2] || hidden_flag(u16(t+20)) ||
+                std::find(active.begin(), active.begin()+active_count, key) != active.begin()+active_count) continue;
+            // Disguises, berries and invisible/script actors need their own
+            // effects/state; do not reveal their ordinary sprite underneath.
+            const unsigned movement = t[9];
+            if (movement >= 81 || movement == 11 || movement == 12 || movement == 57 ||
+                movement == 58 || movement == 63 || movement == 76) continue;
+            unsigned graphics = t[1], direction = 1;
+            if (graphics >= 240) {
+                if (r != 0) continue; // neighboring-map setup vars are not current
+                graphics = m.u16(save + 0x139C + (0x10 + graphics - 240)*2) & 255;
+            }
+            int foot_x = s16(t+4)*16+8, foot_y = s16(t+6)*16+16;
+            if (const auto* facing = m.bytes(0x085055CD + movement, 1)) direction = *facing;
+            const auto cached = poses_.find(key);
+            if (cached != poses_.end() && cached->second.template_x == s16(t+4) &&
+                cached->second.template_y == s16(t+6)) {
+                if (cached->second.hidden) continue;
+                foot_x = cached->second.x; foot_y = cached->second.y;
+                graphics = cached->second.graphics; direction = cached->second.direction;
+            }
+            if (graphics >= 239 || graphics == 69 || direction > 8) continue;
+            const auto info = m.u32(0x08505620 + graphics*4);
+            const auto* gfx = m.bytes(info, 36);
+            if (!gfx) continue;
+            const int w = s16(gfx+8), h = s16(gfx+10);
+            if (w < 8 || h < 8 || w > 64 || h > 64 || w%8 || h%8) continue;
+            const unsigned slot = gfx[12] & 15, tag = u16(gfx+2);
+            const unsigned resident_tag = slot < 10 ? m.u16(0x0850BDE8 + slot*2) :
+                                          slot == 10 ? m.u16(0x020375B6) : 0xFFFF;
+            if (resident_tag != tag) continue;
+            const auto* anim_index = m.bytes(0x0850DACC + direction, 1);
+            if (!anim_index) continue;
+            const unsigned anim = (gfx[12] & 0x40) ? 0 : *anim_index;
+            const auto command = m.u32(m.u32(info+24) + anim*4);
+            const auto* cmd = m.bytes(command, 4);
+            if (!cmd || u16(cmd) >= 64) continue;
+            const auto image_entry = m.u32(info+28) + u16(cmd)*8;
+            const auto* image = m.bytes(m.u32(image_entry), w*h/2);
+            if (!image || m.u16(image_entry+4) < w*h/2) continue;
+            const int x = region.x*16 + foot_x - w/2 - field.origin_x();
+            const int y = region.y*16 + foot_y - h - field.origin_y();
+            if (x+w <= left_ || x >= left_+width_ || y+h <= top_ || y >= top_+height_) continue;
+            const auto* priority_data = m.bytes(0x0850E634 + (t[8] & 15), 1);
+            if (!priority_data || *priority_data > 3) continue;
+            const unsigned priority = *priority_data;
+            bool drawn = false;
+            for (int py = std::max(0, top_-y); py < h && y+py < top_+height_; ++py)
+                for (int px = std::max(0, left_-x); px < w && x+px < left_+width_; ++px) {
+                    const int hx = x+px, hy = y+py;
+                    if (hx >= 0 && hx < 240 && hy >= 0 && hy < 160) continue;
+                    const int tx = (cmd[2] & 64) ? w-1-px : px;
+                    const int ty = (cmd[2] & 128) ? h-1-py : py;
+                    const unsigned offset = ((ty/8)*(w/8)+tx/8)*32 + (ty&7)*4+(tx&7)/2;
+                    const unsigned index = (image[offset] >> ((tx&1)*4)) & 15;
+                    if (!index) continue;
+                    auto& dest = pixels_[(hy-top_)*width_+hx-left_];
+                    if (!(dest.color & 0x8000) && dest.priority <= priority) continue;
+                    dest = {static_cast<std::uint16_t>(u16(m.pal+0x200+slot*32+index*2) & 0x7FFF),
+                            static_cast<std::uint8_t>(priority), 127};
+                    drawn = true;
+                }
+            dormant_objects_ += drawn;
+        }
+    }
 }
 
 bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width, int height) {
     ready_ = false;
     objects_ = verified_parts_ = 0;
+    dormant_objects_ = 0;
     mismatch_.fill(0);
     width_ = std::clamp(width, 240, kMaxViewWidth);
     left_ = -(width_ - 240) / 2;
     height_ = std::clamp(height, 160, kMaxViewHeight);
     top_ = -(height_ - 160) / 2;
     if (field.status() != ViewStatus::Ready || !m.oam || !m.pal || !m.vram || !m.io)
+    {
+        if (field.status() != ViewStatus::Unverified) poses_.clear();
         return false;
+    }
     pixels_.assign(width_ * height_, {});
     const int offset_x = static_cast<std::int16_t>(m.u16(kOffsetX));
     const int offset_y = static_cast<std::int16_t>(m.u16(kOffsetY));
@@ -103,7 +244,14 @@ bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width,
                     order = idx; found = true;
                 }
             }
-            if (!(o[1] & 0x40)) { // Offscreen sprites deliberately have no OAM.
+            const int part_width = widths[p.a0 >> 14][p.a1 >> 14];
+            const int part_height = heights[p.a0 >> 14][p.a1 >> 14];
+            const bool touches_native = p.x < 240 && p.x + part_width > 0 &&
+                                        p.y < 160 && p.y + part_height > 0;
+            // Emerald's offScreen flag includes a 16px halo. The hardware
+            // OAM builder can already omit a sprite in that halo; it must not
+            // invalidate every extended NPC while none of its pixels are native.
+            if (!(o[1] & 0x40) && touches_native) {
                 if (!found) {
                     mismatch_ = {unsigned(id),p.a0,p.a1,p.a2,0,0,0};
                     for (int idx = 0; idx < 128; ++idx) {
@@ -114,9 +262,9 @@ bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width,
                     }
                     return false;
                 }
-                ++verified_parts_;
             }
             if (found) {
+                ++verified_parts_;
                 const auto* hw = m.oam + order * 8;
                 p.a0 = u16(hw); p.a1 = u16(hw+2); p.a2 = u16(hw+4);
                 p.x = unwrap(p.a1 & 511, p.x, 512);
@@ -146,6 +294,7 @@ bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width,
             }
         }
     }
+    dormant(m, field);
     ready_ = true;
     return true;
 }

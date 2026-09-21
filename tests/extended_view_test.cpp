@@ -70,6 +70,139 @@ struct Fixture {
 
 int main() {
     {
+        Fixture npc;
+        npc.rom.resize(0x600000);
+        npc.dword(0x08000100, 25); npc.dword(0x08000104, 18);
+        npc.dword(0x0800010c, 0x08008000);
+        npc.dword(0x0203731c, 0x08006800); npc.word(0x08006800, 1);
+        const unsigned t = 0x02010c70, sprite = 0x02020630;
+        npc.word(t, 0x0101); // local 1, graphics 1
+        npc.word(t+4, 5); npc.word(t+6, 12); npc.word(t+8, 0x803);
+        npc.dword(0x08505624, 0x08009600);
+        npc.word(0x08009602, 0x1100); npc.word(0x08009608, 16); npc.word(0x0800960a, 32);
+        npc.word(0x0800960c, 2); npc.word(0x0850bdec, 0x1100);
+        npc.dword(0x08009618, 0x08009700); npc.dword(0x08009700, 0x08009710);
+        npc.word(0x08009710, 0); npc.dword(0x0800961c, 0x08009720);
+        npc.dword(0x08009720, 0x0800a000); npc.word(0x08009724, 256);
+        for (int i = 0; i < 256; i += 2) npc.word(0x0800a000+i, 0x1111);
+        npc.word(0x085055d5, 1); // face south; animation index zero
+        npc.word(0x0850e636, 0x0200); // elevation 3 -> priority 2
+        std::vector<std::uint8_t> oam(0x400), pal(0x400);
+        auto memory = npc.memory(); memory.oam = oam.data(); memory.pal = pal.data();
+        pal[0x242] = 31;
+        npc.reg(0, 0x1e40); npc.dword(0x030022e0, 100);
+        emerald::FieldView field;
+        auto objects = std::make_unique<emerald::ObjectView>();
+        require(field.prepare(memory, 240, 854) == ViewStatus::Ready, "dormant NPC map failed");
+        const auto check = [&](int x, bool visible, const char* message) {
+            int left, width;
+            const auto* row = objects->row(208, &left, &width);
+            require(row && ((row[x-left].color == 31) == visible), message);
+        };
+        const auto saved_ram = npc.ewram;
+        require(objects->prepare(memory, field, 240, 854) && objects->dormant_objects() == 1,
+                "unspawned current-map NPC missing");
+        check(32, true, "dormant ROM image or map coordinates wrong");
+        require(npc.ewram == saved_ram, "dormant renderer changed guest memory");
+        // An active sprite owns this identity, then its last position survives
+        // native despawning. No duplicate appears at the template coordinates.
+        npc.ewram[0x37350] = 1; npc.ewram[0x37351] = 0x40;
+        npc.ewram[0x37355] = 1; npc.ewram[0x37358] = 1;
+        npc.ewram[0x37368] = 1;
+        npc.word(0x0203735c, 12); npc.word(0x0203735e, 19);
+        npc.word(sprite, 0x8000); npc.word(sprite+2, 0x8000); npc.word(sprite+4, 0x2800);
+        npc.word(sprite+32, 56); npc.word(sprite+34, 224);
+        npc.word(sprite+40, 0xf0f8); npc.word(sprite+62, 3);
+        npc.dword(0x030022e0, 101);
+        require(objects->prepare(memory, field, 240, 854) && !objects->dormant_objects(), "active NPC duplicated");
+        npc.ewram[0x37350] = 0; npc.dword(0x030022e0, 102);
+        objects->prepare(memory, field, 240, 854);
+        check(48, true, "despawn discarded last known NPC position");
+        check(32, false, "cached NPC duplicated at spawn point");
+        npc.word(t+4, 8); objects->prepare(memory, field, 240, 854);
+        check(80, true, "scripted template relocation lost to cached NPC pose");
+        check(48, false, "scripted template relocation left stale NPC");
+        npc.word(t+4, 5);
+        npc.word(t+20, 1); npc.ewram[0x11270] = 2;
+        npc.dword(0x030022e0, 103); objects->prepare(memory, field, 240, 854);
+        require(!objects->dormant_objects(), "story flag resurrected hidden NPC");
+        npc.ewram[0x11270] = 0; npc.dword(0x030022e0, 50);
+        objects->prepare(memory, field, 240, 854);
+        check(32, true, "savestate rewind retained stale NPC pose");
+        check(48, false, "savestate rewind duplicated NPC pose");
+        npc.word(t+8, 0x4c03); objects->prepare(memory, field, 240, 854);
+        require(!objects->dormant_objects(), "invisible movement template was revealed");
+    }
+    {
+        Fixture maps;
+        maps.rom.resize(0x500000);
+        maps.dword(0x08000100, 25); maps.dword(0x08000104, 18);
+        maps.dword(0x0800010c, 0x08008000);
+        maps.dword(0x02037324, 0x08006000);
+        maps.dword(0x08006000, 4); maps.dword(0x08006004, 0x08006100);
+        maps.dword(0x08486578, 0x08007000);
+        maps.dword(0x08007000, 0x02037318);
+        for (int direction = 1; direction <= 4; ++direction) {
+            const unsigned header = 0x08009000 + direction * 0x100;
+            const unsigned layout = header + 0x20, data = 0x0800a000 + (direction-1)*0x400;
+            const unsigned connection = 0x08006100 + (direction-1)*12;
+            maps.word(connection, direction);
+            maps.dword(connection+4, direction % 2 ? -3 : 3);
+            // North/east use +3; south/west use -3, covering signed offsets.
+            maps.word(connection+8, direction*256);
+            maps.dword(0x08007000+direction*4, header);
+            maps.dword(header, layout);
+            maps.dword(layout, 20); maps.dword(layout+4, 20);
+            maps.dword(layout+12, data);
+            maps.dword(layout+16, 0x08000300); maps.dword(layout+20, 0x08000318);
+            for (int y = 0; y < 20; ++y) for (int x = 0; x < 20; ++x)
+                maps.word(data + (y*20+x)*2, direction*50+x+2*y);
+        }
+        // A reciprocal east/west link exercises graph cycle elimination.
+        maps.dword(0x0800940c, 0x08006200);
+        maps.dword(0x08006200, 1); maps.dword(0x08006204, 0x08006210);
+        maps.word(0x08006210, 3); maps.dword(0x08006214, -3);
+        maps.word(0x08006218, 0);
+        // A second northern map lies within an especially tall viewport.
+        maps.dword(0x0800920c, 0x08006300);
+        maps.dword(0x08006300, 1); maps.dword(0x08006304, 0x08006310);
+        maps.word(0x08006310, 2); maps.dword(0x08006314, 0);
+        maps.word(0x08006318, 5*256); maps.dword(0x08007014, 0x08009500);
+        maps.dword(0x08009500, 0x08009520);
+        maps.dword(0x08009520, 20); maps.dword(0x08009524, 10);
+        maps.dword(0x0800952c, 0x0800b000);
+        maps.dword(0x08009530, 0x08000300); maps.dword(0x08009534, 0x08000318);
+        maps.word(0x0800b000 + 7*20*2, 321);
+        // Missing cells in the padded grid and beyond both vertical ends.
+        maps.word(0x02000000 + (10*40+0)*2, 0x3ff);
+        maps.word(0x02000000 + (10*40+34)*2, 0x3ff);
+        const auto ewram = maps.ewram, iwram = maps.iwram, rom = maps.rom;
+        emerald::FieldView field;
+        require(field.prepare(maps.memory(), 569, 854) == ViewStatus::Ready, "connected field rejected");
+        const auto check = [&](int x, int y, unsigned id, const char* message) {
+            std::uint16_t tile = 0;
+            require(field.tile(2, (x-10)*16, (y-5)*16, &tile) && tile == 0x1400+id*8, message);
+        };
+        check(10, -8, 110, "north connection became border beyond padding");
+        check(10, -16, 321, "second visible connected map was not resolved");
+        check(10, 34, 74, "south connection became border beyond padding");
+        check(0, 10, 175, "west connection offset wrong");
+        check(34, 10, 202, "east connection offset wrong");
+        require(maps.ewram == ewram && maps.iwram == iwram && maps.rom == rom,
+                "connected view mutated guest maps");
+        // A live mutation in the copied connection strip must beat ROM.
+        maps.word(0x02000000 + (10*40+34)*2, 42);
+        field.prepare(maps.memory(), 569, 854);
+        check(34, 10, 42, "ROM replaced a live connection edit");
+        // Reject unavailable graphics and stale connections immediately.
+        maps.dword(0x08009234, 0x08000300);
+        field.prepare(maps.memory(), 569, 854);
+        check(10, -8, 0, "unloaded neighboring tileset was interpreted as current graphics");
+        maps.dword(0x02037324, 0);
+        field.prepare(maps.memory(), 569, 854);
+        check(10, 34, 0, "removed connection retained cached scenery");
+    }
+    {
         Fixture portrait;
         emerald::FieldView field;
         require(field.prepare(portrait.memory(), 240, 427) == ViewStatus::Ready, "portrait field rejected");
@@ -153,6 +286,9 @@ int main() {
                 "next-frame coordinates replaced published NPC position");
         npc.word(sprite+2, 0x81f0);
         // Recycled/mismatched OAM must fail closed immediately.
+        // Put part of this sprite inside the native screen for the check.
+        npc.word(sprite+32, 0); npc.word(sprite+2, 0x81f8);
+        oam[2] = 0xf8;
         oam[4] ^= 1;
         require(!objects->prepare(memory, field, 569) && !objects->row(8,&left,&width),
                 "stale OAM did not invalidate NPC shadow");

@@ -1,6 +1,6 @@
 // Inspect a paused TCP capture without executing guest code. Usage:
 // emerald_view_capture_check <capture-dir> <ROM> [width] [--height N]
-// [--require-visible-objects] [--expect-native]
+// [--require-visible-objects] [--require-dormant-objects] [--expect-native]
 // Files: ewram.bin, iwram.bin, vram.bin, io.bin, pal.bin, oam.bin.
 #include "emerald_extended_view.h"
 #include "emerald_object_view.h"
@@ -35,10 +35,11 @@ int main(int argc, char** argv) {
     if (argc < 3) { std::cerr << "capture directory and ROM required\n"; return 1; }
     const std::filesystem::path root(argv[1]);
     const int width = argc > 3 ? std::atoi(argv[3]) : 569;
-    bool require_visible_objects = false, expect_native = false;
+    bool require_visible_objects = false, require_dormant_objects = false, expect_native = false;
     int height = 160;
     for (int i = 4; i < argc; ++i) {
         if (std::string_view(argv[i]) == "--require-visible-objects") require_visible_objects = true;
+        else if (std::string_view(argv[i]) == "--require-dormant-objects") require_dormant_objects = true;
         else if (std::string_view(argv[i]) == "--expect-native") expect_native = true;
         else if (std::string_view(argv[i]) == "--height" && i + 1 < argc) height = std::atoi(argv[++i]);
         else return 1;
@@ -53,6 +54,7 @@ int main(int argc, char** argv) {
     std::cout << emerald::view_status_name(status) << " native tiles=" << view.matched() << '/' << view.compared() << '\n';
     const bool object_ready = objects.prepare(memory, view, width, height);
     std::cout << "objects=" << objects.objects() << " OAM-parts=" << objects.verified_parts() << " ready=" << object_ready << '\n';
+    std::cout << "dormant objects=" << objects.dormant_objects() << '\n';
     int object_pixels = 0;
     const int top = (height - 160) / 2;
     for (int y=-top; y<height-top; ++y) {
@@ -93,5 +95,6 @@ int main(int argc, char** argv) {
     file.write(reinterpret_cast<const char*>(expanded.data()), expanded.size());
     if (expect_native) return status == emerald::ViewStatus::Ready || differences != 0 || margin_pixels != 0;
     return status != emerald::ViewStatus::Ready || !object_ready || differences != 0 ||
+        (require_dormant_objects && objects.dormant_objects() == 0) ||
         (require_visible_objects && visible_object_pixels == 0);
 }

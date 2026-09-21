@@ -30,6 +30,12 @@ struct ViewMemory {
 enum class ViewStatus { Native, NonField, Unsupported, Unverified, Ready };
 const char* view_status_name(ViewStatus status);
 
+struct FieldMapRegion {
+    std::uint32_t header = 0;
+    int x = 0, y = 0; // metatiles in the current padded map's coordinates
+    std::uint8_t group = 0, number = 0;
+};
+
 class FieldView {
 public:
     ViewStatus prepare(const ViewMemory& memory, int width, int height = 160);
@@ -37,6 +43,10 @@ public:
     ViewStatus status() const { return status_; }
     int compared() const { return compared_; }
     int matched() const { return matched_; }
+    int origin_x() const { return origin_x_; }
+    int origin_y() const { return origin_y_; }
+    int map_count() const { return map_count_; }
+    const FieldMapRegion& map(int index) const { return maps_[index]; }
 private:
     static constexpr int kColumns = 73; // 569px plus a partial tile at either end
     static constexpr int kRows = 108;
@@ -44,6 +54,8 @@ private:
     ViewStatus status_ = ViewStatus::Native;
     int left_ = 0, top_ = 0, width_ = 240, height_ = 160, phase_x_ = 0, phase_y_ = 0;
     int compared_ = 0, matched_ = 0;
+    int origin_x_ = 0, origin_y_ = 0, map_count_ = 0;
+    std::array<FieldMapRegion, 32> maps_{};
 };
 
 void install_extended_view(std::uint32_t left, std::uint32_t right);

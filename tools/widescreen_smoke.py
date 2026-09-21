@@ -144,7 +144,7 @@ def main():
     p.add_argument("--aspect", choices=["fit", "16:9", "21:9", "32:9"], default="32:9")
     p.add_argument("--frames", type=int, default=600)
     p.add_argument("--idle", action="store_true", help="Do not drive the walking route")
-    p.add_argument("--route", choices=["walk", "left", "right", "left-right", "doors-menu"], default="walk")
+    p.add_argument("--route", choices=["walk", "left", "right", "left-right", "doors-menu", "connections"], default="walk")
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -163,6 +163,10 @@ def main():
         if args.route == "doors-menu":
             route = [(0,1023),(70,959),(170,1023),(200,895),(290,1023),(450,1015),(452,1023)]
             report.update(ui_anchor_checks=0, door_margin_checks=0)
+        if args.route == "connections":
+            route = [(0,1023),(20,895),(100,1023),(140,959),(240,1023),
+                     (280,895),(360,1023),(400,959),(500,1023)]
+            report["map_visits"] = []
         route = dict([(0, 1023)] if args.idle else route)
         for frame in range(args.frames):
             if frame in route:
@@ -180,7 +184,7 @@ def main():
                 left = (expected_width - 240)//2
                 center = b"".join(raw[1][(y*expected_width+left)*3:(y*expected_width+left+240)*3]
                                   for y in range(160))
-                rectangles = published_ui_rectangles(clients[0]) if args.route == "doors-menu" else []
+                rectangles = published_ui_rectangles(clients[0]) if args.route in ("doors-menu", "connections") else []
                 diff = sum(a != b and not any(x1 <= (i//3)%240 < x2 and y1 <= (i//3)//240 < y2
                            for x1,y1,x2,y2 in rectangles) for i,(a,b) in enumerate(zip(raw[0], center)))
                 if args.route == "doors-menu":
@@ -206,7 +210,11 @@ def main():
                         png(args.output/f"{name}-{frame:04d}.png", raw[i], shots[i]["w"], 160)
                 if diff:
                     raise AssertionError(f"native center differs at frame {frame}: {diff} channels")
-            if frame in (60, args.frames-1) or (args.route == "doors-menu" and frame in (180,335,479)):
+            connection_checkpoint = args.route == "connections" and frame in (8,120,260,380,520)
+            if frame in (60, args.frames-1) or connection_checkpoint or (args.route == "doors-menu" and frame in (180,335,479)):
+                capture = runs[1][0] / f"connection-{frame}"
+                if connection_checkpoint:
+                    capture.mkdir(exist_ok=True)
                 for region, base, size in [("ewram",0x02000000,0x40000),("iwram",0x03000000,0x8000),
                                            ("vram",0x06000000,0x18000),("pal",0x05000000,0x400),("oam",0x07000000,0x400)]:
                     data = [read_region(c, region, base, size) for c in clients]
@@ -215,6 +223,16 @@ def main():
                     report["memory_checks"] += 1
                     if frame == args.frames-1:
                         (runs[1][0]/(region+".bin")).write_bytes(data[1])
+                    if connection_checkpoint:
+                        (capture/(region+".bin")).write_bytes(data[1])
+                        if region == "ewram":
+                            report["map_visits"].append(struct.unpack_from("<I",data[1],0x37318)[0])
+                if connection_checkpoint:
+                    (capture/"io.bin").write_bytes(read_region(clients[1], "io", 0x04000000, 0x400))
+        if args.route == "connections":
+            visits = report["map_visits"]
+            if len(visits) != 5 or len(set(visits)) != 2 or any(a == b for a,b in zip(visits,visits[1:])):
+                raise AssertionError(f"connection route did not cross both ways twice: {visits}")
         for c in clients:
             coverage = c.call("misses")
             if coverage["distinct_misses"] or coverage["interpreted_insns"] or coverage["healed_native"]:

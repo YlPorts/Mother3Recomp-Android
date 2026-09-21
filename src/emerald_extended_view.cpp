@@ -14,6 +14,8 @@ constexpr std::uint32_t kMapHeader = 0x02037318;
 constexpr std::uint32_t kBackupMap = 0x03005DC0;
 constexpr std::uint32_t kSaveBlock1Ptr = 0x03005D8C;
 constexpr std::uint32_t kCameraOffset = 0x03000E20;
+constexpr std::uint32_t kMapGroups = 0x08486578;
+constexpr int kMapPadding = 7;
 
 int floor8(int value) { return value >= 0 ? value / 8 : -((-value + 7) / 8); }
 int floor2(int value) { return value >= 0 ? value / 2 : -((-value + 1) / 2); }
@@ -26,6 +28,78 @@ struct Map {
     std::uint32_t data = 0, border = 0;
     std::uint32_t metatiles[2]{}, attributes[2]{};
     int width = 0, height = 0;
+    struct ConnectedLayout {
+        std::uint32_t layout = 0, header = 0, data = 0;
+        int x = 0, y = 0, width = 0, height = 0;
+        std::uint8_t group = 0, number = 0;
+    };
+    std::array<ConnectedLayout, 32> connected{};
+    int connected_count = 0;
+
+    bool layout_at(std::uint32_t header, ConnectedLayout& out) const {
+        if (!m.bytes(header, 16)) return false;
+        const auto layout = m.u32(header);
+        if (!m.bytes(layout, 24)) return false;
+        const int w = static_cast<int>(m.u32(layout));
+        const int h = static_cast<int>(m.u32(layout + 4));
+        const auto data = m.u32(layout + 12);
+        if (w < 1 || h < 1 || w > 10240 || h > 10240 || w * h > 10240 ||
+            !m.bytes(data, w * h * 2)) return false;
+        out = {layout, header, data, 0, 0, w, h};
+        return true;
+    }
+
+    // The guest only copies seven metatiles of each neighboring map into
+    // its padded grid (eight to the east). Taller/wider views can see past
+    // that strip. Walk the visible connection graph without changing the
+    // guest map, loading graphics, or carrying state across map transitions.
+    void extend_connections(int min_x, int min_y, int max_x, int max_y) {
+        ConnectedLayout root;
+        if (!layout_at(kMapHeader, root)) return;
+        root.x = root.y = kMapPadding;
+        const auto* location = m.bytes(m.u32(kSaveBlock1Ptr) + 4, 2);
+        if (location) { root.group = location[0]; root.number = location[1]; }
+        connected[connected_count++] = root;
+        for (int next = 0; next < connected_count; ++next) {
+            const auto current = connected[next];
+            const auto list = m.u32(current.header + 12);
+            if (!list || !m.bytes(list, 8)) continue;
+            const auto count = m.u32(list), entries = m.u32(list + 4);
+            if (count > 64 || !m.bytes(entries, count * 12)) continue;
+            for (unsigned i = 0; i < count && connected_count < int(connected.size()); ++i) {
+                const auto* entry = m.bytes(entries + i * 12, 12);
+                const unsigned direction = entry[0];
+                if (direction < 1 || direction > 4) continue; // no dive/emerge/warps
+                const int offset = static_cast<std::int32_t>(m.u32(entries + i * 12 + 4));
+                if (offset < -10240 || offset > 10240) continue;
+                const auto group = m.u32(kMapGroups + entry[8] * 4);
+                ConnectedLayout neighbor;
+                if (!layout_at(m.u32(group + entry[9] * 4), neighbor)) continue;
+                neighbor.group = entry[8]; neighbor.number = entry[9];
+                // Tile entries can only address graphics already resident in
+                // VRAM. Never interpret an unrelated tileset using those tiles.
+                if (m.u32(neighbor.layout + 16) != m.u32(root.layout + 16) ||
+                    m.u32(neighbor.layout + 20) != m.u32(root.layout + 20)) continue;
+                neighbor.x = current.x;
+                neighbor.y = current.y;
+                switch (direction) {
+                case 1: neighbor.x += offset; neighbor.y += current.height; break;
+                case 2: neighbor.x += offset; neighbor.y -= neighbor.height; break;
+                case 3: neighbor.x -= neighbor.width; neighbor.y += offset; break;
+                case 4: neighbor.x += current.width; neighbor.y += offset; break;
+                }
+                if (neighbor.x > max_x || neighbor.y > max_y ||
+                    neighbor.x + neighbor.width <= min_x ||
+                    neighbor.y + neighbor.height <= min_y) continue;
+                const auto duplicate = std::find_if(connected.begin(), connected.begin() + connected_count,
+                    [&](const ConnectedLayout& seen) {
+                        return seen.layout == neighbor.layout && seen.x == neighbor.x && seen.y == neighbor.y;
+                    });
+                if (duplicate == connected.begin() + connected_count)
+                    connected[connected_count++] = neighbor;
+            }
+        }
+    }
 
     bool load() {
         const auto layout = m.u32(kMapHeader);
@@ -48,19 +122,33 @@ struct Map {
         return true;
     }
 
-    unsigned metatile(int x, int y) const {
+    unsigned metatile(int x, int y, bool extended = false) const {
         unsigned block = 0x3ff;
         if (x >= 0 && y >= 0 && x < width && y < height)
             block = m.u16(data + 2 * (x + y * width));
-        // The live padded map includes connections and map edits. Undefined
-        // or out-of-bounds cells use the map's authored 2x2 border pattern.
+        // Live map edits and copied connection strips always win over ROM.
+        // Only expand missing cells; native camera validation keeps the exact
+        // guest border behavior, including deliberately undefined live cells.
+        if (block == 0x3ff && extended && connected_count) {
+            const auto& root = connected[0];
+            if (x < root.x || y < root.y || x >= root.x + root.width || y >= root.y + root.height) {
+                for (int i = 1; i < connected_count; ++i) {
+                    const auto& map = connected[i];
+                    const int mx = x - map.x, my = y - map.y;
+                    if (mx >= 0 && my >= 0 && mx < map.width && my < map.height) {
+                        block = m.u16(map.data + 2 * (mx + my * map.width));
+                        break;
+                    }
+                }
+            }
+        }
         if (block == 0x3ff)
             block = m.u16(border + 2 * (wrap(x + 1, 2) + 2 * wrap(y + 1, 2)));
         return block & 0x3ff;
     }
 
-    bool entries(int tile_x, int tile_y, std::uint16_t out[3]) const {
-        const unsigned id = metatile(floor2(tile_x), floor2(tile_y));
+    bool entries(int tile_x, int tile_y, std::uint16_t out[3], bool extended = false) const {
+        const unsigned id = metatile(floor2(tile_x), floor2(tile_y), extended);
         const unsigned set = id / 512, index = id % 512;
         const auto tiles = metatiles[set] + index * 16;
         const auto attr = attributes[set] + index * 2;
@@ -145,6 +233,7 @@ const char* view_status_name(ViewStatus status) {
 ViewStatus FieldView::prepare(const ViewMemory& m, int width, int height) {
     status_ = ViewStatus::Native;
     compared_ = matched_ = 0;
+    map_count_ = 0;
     width_ = std::clamp(width, 240, kMaxViewWidth);
     height_ = std::clamp(height, 160, kMaxViewHeight);
     left_ = (width_ - 240) / 2;
@@ -220,9 +309,20 @@ ViewStatus FieldView::prepare(const ViewMemory& m, int width, int height) {
     const int first_y = floor8(-top_ + phase_y_);
     const int last_y = floor8(height_ - top_ - 1 + phase_y_);
     if (last_x - first_x >= kColumns || last_y - first_y >= kRows) return status_;
+    map.extend_connections(floor2(origin_tile_x + best_x + first_x),
+                           floor2(origin_tile_y + best_y + first_y),
+                           floor2(origin_tile_x + best_x + last_x),
+                           floor2(origin_tile_y + best_y + last_y));
+    origin_x_ = (origin_tile_x + best_x) * 8 + phase_x_;
+    origin_y_ = (origin_tile_y + best_y) * 8 + phase_y_;
+    map_count_ = map.connected_count;
+    for (int i = 0; i < map_count_; ++i) {
+        const auto& region = map.connected[i];
+        maps_[i] = {region.header, region.x, region.y, region.group, region.number};
+    }
     for (int y = first_y; y <= last_y; ++y) for (int x = first_x; x <= last_x; ++x) {
         std::uint16_t entries[3];
-        if (!map.entries(origin_tile_x + best_x + x, origin_tile_y + best_y + y, entries))
+        if (!map.entries(origin_tile_x + best_x + x, origin_tile_y + best_y + y, entries, true))
             return status_;
         // The live ring only represents a bounded 32x32 tile area; never
         // accept its wrapped aliases as doors elsewhere in the expanded map.

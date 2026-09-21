@@ -21,11 +21,11 @@ In headless tests, Fit uses a
 
 ## Deliberate limits
 
-- Scenery and **live overworld NPCs** extend into the margins, including NPC
-  sprites hidden by the game's screen-edge culler. The guest's farther object
-  spawn/despawn range is unchanged: this does not instantiate unloaded map
-  events or simulate distant NPC movement. Field effects, reflections and
-  non-object sprites still retain native visibility.
+- Scenery and NPCs extend into the margins. Live sprites retain their native
+  animation, while unloaded current/connected-map NPCs use idle ROM poses at
+  their map or last observed positions. The guest's spawn/despawn range, AI,
+  trainer activation and scripts stay unchanged. Story-hidden/disguised actors,
+  unavailable palettes, field effects and reflections retain native visibility.
 - Overworld BG0 windows anchor to the corresponding viewport edges: Start
   menu top-right, location banner top-left, dialogue bottom-center. Their
   original text, borders and cursors are sampled from live VRAM. Battles and
@@ -72,9 +72,11 @@ flips; actual VRAM and PAL supply animation graphics and colors. This handles
 Sprite RAM advancing ahead of the currently displayed OAM. Live objects
 marked `offScreen` can still render from their software sprite; explicit
 script invisibility and inactive objects remain hidden. Mismatches log
-`DEGRADED` and suppress the object layer. Every frame starts fresh, including
-save loads and warps. The engine consumes the layer only outside native X
-0..239 and preserves BG priority and color effects. Authored scenery and NPC
+`DEGRADED` and suppress the object layer. Live pixels are decoded afresh every
+frame; dormant poses are invalidated on save loads, non-field scenes, template
+relocation and leaving the connected viewport. The engine consumes this layer
+only outside the native 240x160 rectangle and preserves BG priority and color
+effects. Authored scenery and NPC
 margins bypass native window layer masks: Emerald's ordinary WINOUT disables
 OBJ outside the original screen. Native window behavior remains unchanged.
 
@@ -105,9 +107,9 @@ scene fallback and the absence of guest writes.
 
 `tools/widescreen_smoke.py` accepts `--exe`, `--bios`, `--rom`, `--state`,
 `--output`, optional `--toolchain`, `--aspect`, `--frames` and `--route`
-(`walk`, `left`, `right`, `left-right`, `doors-menu`). It creates
+(`walk`, `left`, `right`, `left-right`, `doors-menu`, `connections`). It creates
 isolated native/wide copies, drives identical input, compares the central
-image every eight frames, and compares RAM/VRAM/PAL/OAM at checkpoints. It
+image every eight frames, and compares RAM/VRAM/PAL/OAM at checkpoints.
 The `doors-menu` route uses the Sept 20 doorway F1 fixture, checks visible door
 margins and Start-menu edge placement, and excludes published UI rectangles
 from the native-center comparison while still comparing guest memory exactly.
@@ -173,6 +175,45 @@ world without the former 30-pixel side borders. This was verified from the
 visible Direct3D11 preview, in addition to logical framebuffer captures. Three
 portrait sizes were also tested with a live battle and had black margins around
 the nonempty native battle image. The original F1 file remained unchanged.
+
+Connected-map regression (2026-09-20, `beads-5ae.3.7`): the native padded
+map only copies seven metatiles from its neighbors (eight on the east). A tall
+portrait view could exceed that strip and substitute border trees. The adapter
+now follows the visible ROM connection graph, including signed offsets and
+multiple adjoining maps, with bounded traversal and matching resident tilesets.
+Live cells still override ROM, native camera verification keeps the guest's
+exact border rules, and there is no persistent map cache or guest mutation.
+The owner's new F1 fixture crossed Route 101/Littleroot in both directions
+twice over 560 frames: 70 unchanged native-center samples outside anchored UI,
+35 equal memory checkpoints, and fully static execution. Read-only portrait
+captures on both sides preserve all 210 camera probes and the native center
+while showing the neighboring route/town beyond the former tree cutoff.
+Unit regressions cover four directions, signed offsets, reciprocal links,
+multiple visible maps, live edits, incompatible tilesets and removed links.
+The `connections` smoke route checks alternating map visits and writes five
+captures for `emerald_view_capture_check <capture> <ROM> 240 --height 566`.
+
+NPC residency regression (2026-09-20, `beads-5ae.3.8`): the renderer now reads
+current save-block templates and connected-map ROM templates for NPCs absent
+from the guest's 16-object pool. It uses ROM idle frames, resident palettes,
+elevation priority, story flags, and identities keyed by map and local ID.
+Active actors suppress templates even when explicitly hidden. A bounded host
+pose cache retains observed positions/facing without simulating AI; runtime
+state epochs clear it on every savestate load. Template relocation supersedes
+cached poses. No additional guest actors, scripts or RNG calls are executed.
+The offscreen OAM check also accounts for Emerald's 16px culling halo, so a
+fully offscreen part omitted from OAM does not invalidate other margin actors.
+The native intersecting-part checks remain strict.
+
+Twelve captured live NPC frames matched their declared ROM images against
+VRAM byte-for-byte. A 560-frame round trip preserved 70 native center samples
+and 35 guest-memory comparisons with fully static coverage. Five portrait
+captures across both maps showed 2-3 dormant NPCs and 459-840 final margin
+object pixels while preserving the native center. Use
+`--require-dormant-objects --require-visible-objects` with the capture checker
+to enforce both decoded residency and final composited visibility. Unit tests
+cover dormant placement, live ownership, despawning, template relocation,
+story flags, invisible movement types and savestate rewind.
 
 Release artifact validation (2026-09-14): the extracted Windows ZIP passed a
 720-frame 32:9 left/right run using its bundled toolchain, with 90 unchanged
