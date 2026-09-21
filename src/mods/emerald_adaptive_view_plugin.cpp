@@ -1,5 +1,6 @@
 #include "emerald_extended_view.h"
 #include "emerald_object_view.h"
+#include "emerald_ui_view.h"
 #include "gba_bus.h"
 #include "gba_ppu.h"
 #include "mod_runtime.h"
@@ -14,6 +15,7 @@ namespace {
 constexpr const char* kPackage = "pokemon-emerald.enhancement.widescreen";
 FieldView view;
 ObjectView objects;
+UiView ui;
 bool last_objects_ready = true;
 bool enabled = false;
 ViewStatus last_status = ViewStatus::Native;
@@ -23,6 +25,9 @@ int tile_provider(int bg, int x, int y, std::uint16_t* entry) {
 }
 const gba::WsMarginObjPixel* object_provider(int y, int* left, int* width) {
     return objects.row(y, left, width);
+}
+int ui_provider(int bg, int x, int y, int* sx, int* sy) {
+    return ui.sample(bg, x, y, sx, sy);
 }
 
 void activate() {
@@ -39,6 +44,7 @@ void activate() {
 void reset_extended_view() {
     enabled = false;
     view = FieldView{};
+    ui = UiView{};
     // prepare clears every frame; removing the hook also invalidates a reset.
     last_objects_ready = true;
     last_status = ViewStatus::Native;
@@ -47,6 +53,7 @@ void reset_extended_view() {
         gba::g_ws_authored_margin_layers = 0;
         gba::g_ws_obj_native_clip = 0;
         gba::g_ws_obj_margin_provider = nullptr;
+        gba::g_ws_bg_xy_provider = nullptr;
         gba::g_ws_pillarbox = 0;
     }
     gba_mod_set_adaptive_view_enabled(0);
@@ -61,6 +68,8 @@ void install_extended_view(std::uint32_t, std::uint32_t) {
     // separate layer, including sprites suppressed by the guest's X culler.
     gba::g_ws_obj_native_clip = 1;
     gba::g_ws_obj_margin_provider = object_provider;
+    gba::g_ws_bg_xy_provider = ui_provider;
+    gba::g_ws_bg_xy_provider_layers = 1;
     gba::g_ws_pillarbox = 1;
 }
 
@@ -71,8 +80,9 @@ void update_extended_view(const gbarecomp::ExtendedViewFrameInfo* frame) {
     const ViewMemory memory{bus->ewram_ptr(), bus->iwram_ptr(), bus->rom_ptr(),
                            bus->rom_size(), bus->vram_ptr(), frame->io,
                            bus->oam_ptr(), bus->pal_ptr()};
-    const auto status = view.prepare(memory, frame->view_width);
-    const bool objects_ready = objects.prepare(memory, view, frame->view_width);
+    const auto status = view.prepare(memory, frame->view_width, frame->view_height);
+    const bool objects_ready = objects.prepare(memory, view, frame->view_width, frame->view_height);
+    ui.prepare(memory, view, frame->view_width, frame->view_height);
     if (status == ViewStatus::Ready && objects_ready != last_objects_ready) {
         std::fprintf(stderr, "[emerald:objects] %s frame=%llu objects=%d verified-parts=%d\n",
             objects_ready ? "verified" : "DEGRADED: OAM mismatch, native objects only",
@@ -98,4 +108,6 @@ void update_extended_view(const gbarecomp::ExtendedViewFrameInfo* frame) {
 GBA_MOD_CONSTRUCTOR(emerald_register_adaptive_view_plugin) {
     gba_mod_register_reset_callback(emerald::reset_extended_view);
     gba_mod_register_activation_plugin("pokemon-emerald.widescreen", emerald::activate);
+    // Keep 0.1.0 installations working while gating new packages on this build.
+    gba_mod_register_activation_plugin("pokemon-emerald.widescreen.v2", emerald::activate);
 }

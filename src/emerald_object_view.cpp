@@ -20,15 +20,17 @@ constexpr int heights[3][4] = {{8,16,32,64},{8,8,16,32},{16,32,32,64}};
 struct Part { int x, y; unsigned a0, a1, a2; };
 }
 
-bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width) {
+bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width, int height) {
     ready_ = false;
     objects_ = verified_parts_ = 0;
     mismatch_.fill(0);
     width_ = std::clamp(width, 240, kMaxViewWidth);
     left_ = -(width_ - 240) / 2;
+    height_ = std::clamp(height, 160, kMaxViewHeight);
+    top_ = -(height_ - 160) / 2;
     if (field.status() != ViewStatus::Ready || !m.oam || !m.pal || !m.vram || !m.io)
         return false;
-    pixels_.fill({});
+    pixels_.assign(width_ * height_, {});
     const int offset_x = static_cast<std::int16_t>(m.u16(kOffsetX));
     const int offset_y = static_cast<std::int16_t>(m.u16(kOffsetY));
     const bool mapping_1d = (u16(m.io) & 0x40) != 0;
@@ -124,18 +126,19 @@ bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width)
             const int w = widths[shape][size], h = heights[shape][size];
             const bool part_hflip = (p.a1 & 0x1000) != 0, part_vflip = (p.a1 & 0x2000) != 0;
             const int priority = (p.a2 >> 10) & 3, palette = p.a2 >> 12;
-            for (int py = std::max(0, -p.y); py < h && p.y + py < 160; ++py) {
+            for (int py = std::max(0, top_ - p.y); py < h && p.y + py < top_ + height_; ++py) {
                 const int ty = part_vflip ? h - 1 - py : py;
                 for (int px = 0; px < w; ++px) {
                     const int hx = p.x + px, out_x = hx - left_;
-                    if (out_x < 0 || out_x >= width_ || (hx >= 0 && hx < 240)) continue;
+                    if (out_x < 0 || out_x >= width_ ||
+                        (hx >= 0 && hx < 240 && p.y + py >= 0 && p.y + py < 160)) continue;
                     const int tx = part_hflip ? w - 1 - px : px;
                     const unsigned tile = (p.a2 & 1023) + (ty / 8) * (mapping_1d ? w / 8 : 32) + tx / 8;
                     const unsigned offset = 0x10000 + tile * 32 + (ty & 7) * 4 + (tx & 7) / 2;
                     if (offset >= 0x18000) return false;
                     const unsigned index = (m.vram[offset] >> ((tx & 1) * 4)) & 15;
                     if (!index) continue;
-                    auto& dest = pixels_[(p.y + py) * kMaxViewWidth + out_x];
+                    auto& dest = pixels_[(p.y + py - top_) * width_ + out_x];
                     if (!(dest.color & 0x8000) && dest.priority * 256 + dest.order <= priority * 256 + order) continue;
                     dest = {static_cast<std::uint16_t>(u16(m.pal + 0x200 + palette * 32 + index * 2) & 0x7FFF),
                             static_cast<std::uint8_t>(priority), static_cast<std::uint8_t>(order)};
@@ -148,8 +151,8 @@ bool ObjectView::prepare(const ViewMemory& m, const FieldView& field, int width)
 }
 
 const gba::WsMarginObjPixel* ObjectView::row(int y, int* left, int* width) const {
-    if (!ready_ || y < 0 || y >= 160 || !left || !width) return nullptr;
+    if (!ready_ || y < top_ || y >= top_ + height_ || !left || !width) return nullptr;
     *left = left_; *width = width_;
-    return pixels_.data() + y * kMaxViewWidth;
+    return pixels_.data() + (y - top_) * width_;
 }
 } // namespace emerald

@@ -1,5 +1,6 @@
 #include "emerald_extended_view.h"
 #include "emerald_object_view.h"
+#include "emerald_ui_view.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -68,6 +69,52 @@ struct Fixture {
 };
 
 int main() {
+    {
+        Fixture portrait;
+        emerald::FieldView field;
+        require(field.prepare(portrait.memory(), 240, 427) == ViewStatus::Ready, "portrait field rejected");
+        std::uint16_t tile;
+        require(field.tile(2, 0, -133, &tile) && field.tile(2, 239, 293, &tile), "portrait bounds missing");
+        require(!field.tile(2, 0, -134, &tile) && !field.tile(2, 0, 294, &tile), "portrait bounds exceeded");
+        // Real Start menu: 7x14 interior at (22,1), with a one-tile frame.
+        portrait.reg(8, 27 * 256);
+        portrait.word(0x02020004, 22 * 256);
+        portrait.word(0x02020006, 1 + 7 * 256);
+        portrait.word(0x02020008, 14 + 15 * 256);
+        portrait.word(0x0202000a, 0x139);
+        portrait.dword(0x0202000c, 0x02021000);
+        const int at = 27 * 0x800 + (32 + 22) * 2;
+        portrait.vram[at] = 0x39; portrait.vram[at+1] = 0xf1;
+        emerald::UiView ui;
+        ui.prepare(portrait.memory(), field, 240, 427);
+        int sx = 0, sy = 0;
+        require(ui.sample(0, 176, -125, &sx, &sy) == 1 && sx == 176 && sy == 8, "portrait Start menu not top anchored");
+        require(ui.sample(0, 176, 100, &sx, &sy) == -1, "old menu location not suppressed");
+        require(field.prepare(portrait.memory(), 569) == ViewStatus::Ready, "wide menu field rejected");
+        ui.prepare(portrait.memory(), field, 569, 160);
+        require(ui.sample(0, 341, 8, &sx, &sy) == 1 && sx == 176 && sy == 8, "wide Start menu not right anchored");
+        // Hiding the published window must remove its mapping immediately.
+        portrait.vram[at] = portrait.vram[at+1] = 0;
+        ui.prepare(portrait.memory(), field, 569, 160);
+        require(ui.sample(0, 341, 8, &sx, &sy) == -1, "hidden menu retained stale placement");
+    }
+    {
+        Fixture door;
+        door.rom.resize(0x500000);
+        door.word(0x08497174, 13);
+        door.word(0x08497176, 0x100); // ordinary one-metatile door
+        door.dword(0x0849717c, 0x08009000);
+        for (int i = 0; i < 12; i += 2) door.word(0x08009000 + i, 0x0202);
+        const unsigned entries[] = {0, 0x2000, 0x23fc};
+        for (int bg = 0; bg < 3; ++bg) {
+            const int offset = (28 + bg) * 0x800 + (6 * 32 + 6) * 2;
+            door.vram[offset] = entries[bg]; door.vram[offset+1] = entries[bg] >> 8;
+        }
+        emerald::FieldView field;
+        require(field.prepare(door.memory(), 569) == ViewStatus::Ready, "animated door caused fallback");
+        door.vram[30 * 0x800 + (6 * 32 + 6) * 2] ^= 1;
+        require(field.prepare(door.memory(), 569) == ViewStatus::Unverified, "unrelated door-shaped corruption accepted");
+    }
     // An NPC straddling the native edge, with one 16x32 subsprite. The live
     // guest OAM is the validation source; then exercise the software culler.
     {
@@ -115,6 +162,17 @@ int main() {
         require(objects->prepare(memory, field, 569), "software-culled live NPC rejected");
         row = objects->row(8,&left,&width);
         require(row[-48-left].color == 31, "software-culled NPC disappeared");
+        // The same loaded NPC above the native screen must appear in portrait,
+        // without copying its pixels into the original 240x160 center.
+        npc.word(sprite+32, 80); npc.word(sprite+34, -8);
+        require(field.prepare(memory, 240, 427) == ViewStatus::Ready &&
+                objects->prepare(memory, field, 240, 427), "portrait NPC decode failed");
+        row = objects->row(-20, &left, &width);
+        require(row && row[72].color == 31, "vertical NPC margin missing");
+        row = objects->row(0, &left, &width);
+        require(row && row[72].color == 0x8000, "vertical NPC touched native center");
+        npc.word(sprite+32, -40); npc.word(sprite+34, 16);
+        field.prepare(memory, 569);
         npc.ewram[0x37351] |= 0x20;
         require(objects->prepare(memory, field, 569), "script-hidden NPC fixture failed");
         row = objects->row(8,&left,&width);

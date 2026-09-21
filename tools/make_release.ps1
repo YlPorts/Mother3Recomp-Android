@@ -106,7 +106,10 @@ foreach ($g in $games) {
   # Bundle the self-contained tcc overlay toolchain (TinyCC + overlay shim
   # headers) next to the exe so a toolchain-less player box self-heals overlay
   # gaps via tcc (overlay backend auto -> tcc). See gbarecomp/tools/fetch_tcc.ps1.
-  $engine = (Resolve-Path (Join-Path $PSScriptRoot '..\gbarecomp')).Path
+  # Respect an explicitly configured sibling/worktree engine checkout.
+  $engineSetting = Select-String -LiteralPath (Join-Path $build 'CMakeCache.txt') -Pattern '^GBARECOMP_ROOT:PATH=(.+)$'
+  if (-not $engineSetting) { throw 'Configured GBARECOMP_ROOT is missing from CMakeCache.txt' }
+  $engine = (Resolve-Path -LiteralPath $engineSetting.Matches[0].Groups[1].Value).Path
   & (Join-Path $engine 'tools\fetch_tcc.ps1') -Toolchain (Join-Path $stage 'overlay_toolchain') -EngineRoot $engine
 
   # ROM SHA-1 from the variant's game.toml (best-effort; for the README only).
@@ -144,8 +147,11 @@ The ROM and BIOS are **never** redistributed - supply your own dumps.
 Open **Mods**, enable **Overworld Widescreen (Experimental)**, and choose
 **Fit to window**, **16:9**, **21:9** or **32:9**. Apply the selection and play.
 The feature ships disabled and preserves native gameplay and save data.
-It expands scenery and live NPCs; distant object spawning, field effects and
-vertical/portrait expansion remain outside this experimental version.
+Fit fills landscape and portrait windows with additional scenery and live NPCs.
+Overworld menus anchor to the viewport edges, and door animations keep the
+expanded scenery visible. Battles retain their native 3:2 view with black margins.
+Mod 0.2.0 requires this v0.0.6-or-newer executable. Distant object spawning and
+special field effects retain the original game's limits.
 
 See the GitHub release notes for what changed in v$Version.
 "@ | Out-File (Join-Path $stage 'README.md') -Encoding utf8

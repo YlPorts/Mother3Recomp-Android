@@ -48,8 +48,7 @@ struct Map {
         return true;
     }
 
-    bool entries(int tile_x, int tile_y, std::uint16_t out[3]) const {
-        const int x = floor2(tile_x), y = floor2(tile_y);
+    unsigned metatile(int x, int y) const {
         unsigned block = 0x3ff;
         if (x >= 0 && y >= 0 && x < width && y < height)
             block = m.u16(data + 2 * (x + y * width));
@@ -57,7 +56,11 @@ struct Map {
         // or out-of-bounds cells use the map's authored 2x2 border pattern.
         if (block == 0x3ff)
             block = m.u16(border + 2 * (wrap(x + 1, 2) + 2 * wrap(y + 1, 2)));
-        const unsigned id = block & 0x3ff;
+        return block & 0x3ff;
+    }
+
+    bool entries(int tile_x, int tile_y, std::uint16_t out[3]) const {
+        const unsigned id = metatile(floor2(tile_x), floor2(tile_y));
         const unsigned set = id / 512, index = id % 512;
         const auto tiles = metatiles[set] + index * 16;
         const auto attr = attributes[set] + index * 2;
@@ -73,6 +76,36 @@ struct Map {
         default: return false;
         }
         return true;
+    }
+
+    // Doors replace map tiles directly in the published ring while leaving
+    // the map grid unchanged. Accept only the exact covered-layer pattern
+    // described by this ROM's door graphics table and palette assignments.
+    bool door_entries(int tile_x, int tile_y, const std::uint16_t actual[3]) const {
+        if (actual[0] != 0 || (actual[1] & 0x0FFF) != 0 || (actual[2] & 1023) < 1008) return false;
+        constexpr std::uint32_t table = 0x08497174;
+        if (!m.bytes(table, 648)) return false;
+        const int mx = floor2(tile_x), my = floor2(tile_y);
+        for (int down = 0; down <= 1; ++down) for (int across = 0; across <= 1; ++across) {
+            const auto id = metatile(mx - across, my + down);
+            for (int i = 0; i < 54; ++i) {
+                const auto* gfx = m.bytes(table + i * 12, 12);
+                if (!gfx || read16(gfx) != id) continue;
+                const bool large = gfx[3] == 2;
+                if (across && !large) continue;
+                const int part = (large ? across * 8 : 0) + (1 - down) * 4;
+                const int q = wrap(tile_x, 2) + wrap(tile_y, 2) * 2;
+                const auto* palettes = m.bytes(m.u32(table + i * 12 + 8), 12);
+                if (!palettes) continue;
+                const int palette_part = (1 - down) * 4;
+                const std::uint16_t expected[] = {0,
+                    static_cast<std::uint16_t>(palettes[palette_part + 4 + q] << 12),
+                    static_cast<std::uint16_t>((palettes[palette_part + q] << 12) |
+                                              ((large ? 1008 : 1016) + part + q))};
+                if (std::equal(expected, expected + 3, actual)) return true;
+            }
+        }
+        return false;
     }
 };
 } // namespace
@@ -109,12 +142,14 @@ const char* view_status_name(ViewStatus status) {
     return "unknown";
 }
 
-ViewStatus FieldView::prepare(const ViewMemory& m, int width) {
+ViewStatus FieldView::prepare(const ViewMemory& m, int width, int height) {
     status_ = ViewStatus::Native;
     compared_ = matched_ = 0;
     width_ = std::clamp(width, 240, kMaxViewWidth);
+    height_ = std::clamp(height, 160, kMaxViewHeight);
     left_ = (width_ - 240) / 2;
-    if (width_ == 240) return status_;
+    top_ = (height_ - 160) / 2;
+    if (width_ == 240 && height_ == 160) return status_;
     status_ = ViewStatus::NonField;
     if ((m.u32(kMain + 4) & ~1u) != kOverworld) return status_;
     status_ = ViewStatus::Unsupported;
@@ -158,9 +193,14 @@ ViewStatus FieldView::prepare(const ViewMemory& m, int width) {
             if (!map.entries(origin_tile_x + x + dx, origin_tile_y + y + dy, expected))
                 return -1;
             const int ring = wrap((hofs >> 3) + x, 32) + 32 * wrap((vofs >> 3) + y, 32);
+            std::uint16_t actual[3];
+            for (int bg = 0; bg < 3; ++bg)
+                actual[bg] = read16(m.vram + screen_base[bg] + ring * 2);
+            const bool door = !std::equal(expected, expected + 3, actual) &&
+                map.door_entries(origin_tile_x + x + dx, origin_tile_y + y + dy, actual);
             for (int bg = 0; bg < 3; ++bg) {
                 ++total;
-                matches += expected[bg] == read16(m.vram + screen_base[bg] + ring * 2);
+                matches += door || expected[bg] == actual[bg];
             }
         }
         compared_ = total;
@@ -177,13 +217,24 @@ ViewStatus FieldView::prepare(const ViewMemory& m, int width) {
     if (compared_ == 0 || matched_ != compared_) return status_;
     const int first_x = floor8(-left_ + phase_x_);
     const int last_x = floor8(width_ - left_ - 1 + phase_x_);
-    if (last_x - first_x >= kColumns) return status_;
-    for (int y = 0; y < kRows; ++y) for (int x = first_x; x <= last_x; ++x) {
+    const int first_y = floor8(-top_ + phase_y_);
+    const int last_y = floor8(height_ - top_ - 1 + phase_y_);
+    if (last_x - first_x >= kColumns || last_y - first_y >= kRows) return status_;
+    for (int y = first_y; y <= last_y; ++y) for (int x = first_x; x <= last_x; ++x) {
         std::uint16_t entries[3];
         if (!map.entries(origin_tile_x + best_x + x, origin_tile_y + best_y + y, entries))
             return status_;
+        // The live ring only represents a bounded 32x32 tile area; never
+        // accept its wrapped aliases as doors elsewhere in the expanded map.
+        if (x >= 0 && x < 30 && y >= 0 && y < 20) {
+            const int ring = wrap((hofs >> 3) + x, 32) + 32 * wrap((vofs >> 3) + y, 32);
+            std::uint16_t actual[3];
+            for (int bg = 0; bg < 3; ++bg) actual[bg] = read16(m.vram + screen_base[bg] + ring * 2);
+            if (map.door_entries(origin_tile_x + best_x + x, origin_tile_y + best_y + y, actual))
+                std::copy_n(actual, 3, entries);
+        }
         for (int bg = 0; bg < 3; ++bg)
-            tiles_[bg][y * kColumns + x - first_x] = entries[bg];
+            tiles_[bg][(y - first_y) * kColumns + x - first_x] = entries[bg];
     }
     status_ = ViewStatus::Ready;
     return status_;
@@ -192,9 +243,9 @@ ViewStatus FieldView::prepare(const ViewMemory& m, int width) {
 bool FieldView::tile(int bg, int hardware_x, int screen_y, std::uint16_t* entry) const {
     if (status_ != ViewStatus::Ready || bg < 1 || bg > 3 || !entry ||
         hardware_x < -left_ || hardware_x >= width_ - left_ ||
-        screen_y < 0 || screen_y >= 160) return false;
+        screen_y < -top_ || screen_y >= height_ - top_) return false;
     const int x = floor8(hardware_x + phase_x_) - floor8(-left_ + phase_x_);
-    const int y = (screen_y + phase_y_) / 8;
+    const int y = floor8(screen_y + phase_y_) - floor8(-top_ + phase_y_);
     *entry = tiles_[bg - 1][y * kColumns + x];
     return true;
 }

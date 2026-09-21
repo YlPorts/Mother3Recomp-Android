@@ -9,6 +9,7 @@ namespace gbarecomp { struct ExtendedViewFrameInfo; }
 namespace emerald {
 
 constexpr int kMaxViewWidth = 569; // round(160 * 32 / 9)
+constexpr int kMaxViewHeight = 854; // includes phone portrait and 9:32
 
 // Borrowed, read-only guest regions. Reads never touch the emulated bus, its
 // prefetch state, CPU cycles, or guest memory. Also used by capture tests.
@@ -31,17 +32,17 @@ const char* view_status_name(ViewStatus status);
 
 class FieldView {
 public:
-    ViewStatus prepare(const ViewMemory& memory, int width);
+    ViewStatus prepare(const ViewMemory& memory, int width, int height = 160);
     bool tile(int bg, int hardware_x, int screen_y, std::uint16_t* entry) const;
     ViewStatus status() const { return status_; }
     int compared() const { return compared_; }
     int matched() const { return matched_; }
 private:
     static constexpr int kColumns = 73; // 569px plus a partial tile at either end
-    static constexpr int kRows = 21;
+    static constexpr int kRows = 108;
     std::array<std::array<std::uint16_t, kColumns * kRows>, 3> tiles_{};
     ViewStatus status_ = ViewStatus::Native;
-    int left_ = 0, width_ = 240, phase_x_ = 0, phase_y_ = 0;
+    int left_ = 0, top_ = 0, width_ = 240, height_ = 160, phase_x_ = 0, phase_y_ = 0;
     int compared_ = 0, matched_ = 0;
 };
 

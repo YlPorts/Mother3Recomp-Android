@@ -7,13 +7,16 @@ playing. The packaged feature defaults to disabled.
 
 | Choice | Logical surface | Behavior |
 | --- | --- | --- |
-| Fit to window | 240–569 × 160 | Follows the drawable window aspect, capped at 32:9 |
+| Fit to window | 240–569 × 160, or 240 × 160–854 | Follows landscape and portrait window aspects |
 | 16:9 | 284 × 160 | Fixed width, aspect-correct letterboxing when needed |
 | 21:9 | 373 × 160 | Fixed width |
 | 32:9 | 569 × 160 | Fixed width; 164 pixels left and 165 right |
 
-The fractional ideal widths are rounded to the nearest logical pixel. Narrow
-windows retain the original 240 × 160 view. In headless tests, Fit uses a
+The fractional ideal dimensions are rounded to the nearest logical pixel. Narrow
+windows reveal scenery above/below the original view: 9:16 uses 240 × 427 and
+9:20 uses 240 × 533. Portrait expansion requires v0.0.6 and mod 0.2.0;
+the older v0.0.5 executable supports horizontal expansion only.
+In headless tests, Fit uses a
 284 × 160 initial surface because there is no host window to measure.
 
 ## Deliberate limits
@@ -23,10 +26,12 @@ windows retain the original 240 × 160 view. In headless tests, Fit uses a
   spawn/despawn range is unchanged: this does not instantiate unloaded map
   events or simulate distant NPC movement. Field effects, reflections and
   non-object sprites still retain native visibility.
-- Menus, dialogue and the location banner remain in the central native view.
-  Battles and other non-field callbacks use black side margins.
-- Map loading and animated doors can temporarily return to the native view.
-  The expanded scenery resumes once camera/map validation passes again.
+- Overworld BG0 windows anchor to the corresponding viewport edges: Start
+  menu top-right, location banner top-left, dialogue bottom-center. Their
+  original text, borders and cursors are sampled from live VRAM. Battles and
+  full-screen interfaces retain the centered 240 × 160 image with black margins.
+- Animated doors retain expanded scenery. Full map reloads still require
+  published map data before the expanded scenery resumes, during the black fade.
 - Tested scenes are Littleroot Town, Birch's lab, their door transitions, the
   initial wild battle and the nickname screen. Weather, cycling, surfing,
   caves, special maps and the rest of the game are not qualified by this test.
@@ -41,7 +46,9 @@ The plugin feeds tile entries to the existing GBA expanded PPU, which renders
 tile graphics, palettes, priority and blending from the guest's current state.
 
 Before publishing a frame, the renderer compares 210 native tile/layer probes
-against displayed VRAM. All probes must match. A bounded search resolves the
+against displayed VRAM. All probes must match, including exact animated-door
+overrides validated against the USA ROM's door graphics table and palettes.
+A bounded search resolves the
 one-metatile difference between camera RAM and the published scrolling ring.
 Failure removes the margins and emits an `unverified-camera ... DEGRADED`
 transition in the log. No previous-map cache survives a warp or savestate load.
@@ -50,7 +57,12 @@ This verifies sampled tile mapping, not every offscreen effect in the game.
 The guest executes normally. This plugin does not dispatch additional guest
 functions, edit generated code, or write guest RAM, VRAM, palettes, OAM, saves
 or ROM. Its state is host presentation state. The original 240 × 160 area
-continues to use the normal PPU samples.
+continues to use the normal PPU samples, except for explicitly relocated UI.
+
+Portrait rows are host presentation only: the engine samples authored map and
+live object providers once at frame start without advancing guest scanlines,
+HBlank DMA or affine state. Save states retain their native framebuffer payload.
+The shared capability defaults to a maximum height of 160 unless a game opts in.
 
 `src/emerald_object_view.cpp` decodes live ObjectEvent/Sprite/Subsprite data
 into a host-only margin layer. Each visible part must bind unambiguously to
@@ -93,15 +105,19 @@ scene fallback and the absence of guest writes.
 
 `tools/widescreen_smoke.py` accepts `--exe`, `--bios`, `--rom`, `--state`,
 `--output`, optional `--toolchain`, `--aspect`, `--frames` and `--route`
-(`walk`, `left`, `right`, `left-right`). It creates
+(`walk`, `left`, `right`, `left-right`, `doors-menu`). It creates
 isolated native/wide copies, drives identical input, compares the central
 image every eight frames, and compares RAM/VRAM/PAL/OAM at checkpoints. It
-also checks that a stale `GBARECOMP_VIEW_WIDTH=569` cannot enable the disabled
+The `doors-menu` route uses the Sept 20 doorway F1 fixture, checks visible door
+margins and Start-menu edge placement, and excludes published UI rectangles
+from the native-center comparison while still comparing guest memory exactly.
+It also checks that a stale `GBARECOMP_VIEW_WIDTH=569` cannot enable the disabled
 feature. All game runs use `GBARECOMP_STRICT_STATIC=1`.
 
 `tools/widescreen_resize_smoke.py` takes the same path arguments and tests the
 experiment's own hidden Windows SDL window. It verifies adaptive 16:9, 21:9,
-32:9, portrait and odd widths, plus fixed 21:9 in a 16:9 window.
+32:9, portrait and odd widths, plus fixed 21:9 in a 16:9 window. Use
+`--portrait-only` to run only 4:5, 9:16 and 9:20 window cases.
 
 `emerald_view_capture_check <directory> <ROM> [width]` inspects read-only TCP
 captures (`ewram.bin`, `iwram.bin`, `vram.bin`, `io.bin`, `pal.bin`, `oam.bin`).
@@ -138,6 +154,25 @@ memory, and the updated real window was captured with the NPC visibly present
 while walking left. `emerald_view_capture_check <capture> <ROM> 569
 --require-visible-objects` makes zero final NPC pixels a test failure for these
 fixtures. Portrait expansion is tracked separately and is not in v0.0.5.
+
+Development validation (2026-09-20): the new doorway fixture completed a
+550-frame entry/exit/Start-menu route with 69 native-center comparisons outside
+relocated UI, 25 identical memory checkpoints, 12 visible-door-margin checks,
+10 exact Start-menu pixel comparisons, and fully static execution. The old NPC
+fixture retained 167 decoded/displayed margin pixels; its 720-frame route had
+90 unchanged native-center samples and 10 equal memory checkpoints. All eight
+actual-window resize cases passed both from the doorway and with Start open.
+Portrait door captures preserved the native center while filling all 64,080
+pixels above/below a 240 × 427 view. Battle captures at 569 × 160 and 240 × 427
+preserved the native image with zero nonblack margin pixels. Engine tests cover
+vertical opt-in, odd-height splitting, bounds, scanout timing, snapshot crop,
+source window/effect masks for relocated UI, and native-path isolation.
+The SDL Fit presenter also rounds to physical pixels rather than requiring an
+exact reduced logical ratio: a 540 × 960 window now displays the full portrait
+world without the former 30-pixel side borders. This was verified from the
+visible Direct3D11 preview, in addition to logical framebuffer captures. Three
+portrait sizes were also tested with a live battle and had black margins around
+the nonempty native battle image. The original F1 file remained unchanged.
 
 Release artifact validation (2026-09-14): the extracted Windows ZIP passed a
 720-frame 32:9 left/right run using its bundled toolchain, with 90 unchanged

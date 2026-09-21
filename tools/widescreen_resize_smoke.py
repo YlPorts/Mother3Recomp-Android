@@ -23,6 +23,7 @@ def main():
     for name in ("exe", "bios", "rom", "state", "output"):
         p.add_argument("--"+name, type=lambda s:Path(s).resolve(), required=True)
     p.add_argument("--toolchain", type=Path)
+    p.add_argument("--portrait-only", action="store_true", help="Run the three narrow-window cases")
     args=p.parse_args()
     root=args.output; root.mkdir(parents=True,exist_ok=True)
     exe=root/args.exe.name
@@ -44,14 +45,17 @@ def main():
     user.SetWindowPos.argtypes=[W.HWND,W.HWND,C.c_int,C.c_int,C.c_int,C.c_int,W.UINT]
     user.ShowWindow.argtypes=[W.HWND,C.c_int]
     user.GetClientRect.argtypes=[W.HWND,C.POINTER(W.RECT)]
+    user.GetClassNameW.argtypes=[W.HWND,W.LPWSTR,C.c_int]
     results=[]
-    cases=[("fit",960,540,284),("fit",1260,540,373),("fit",1920,540,569),
-           ("fit",640,800,240),("fit",903,480,301),("21:9",960,540,373)]
-    for index,(aspect,width,height,expected) in enumerate(cases):
+    cases=[("fit",960,540,284,160),("fit",1260,540,373,160),("fit",1920,540,569,160),
+           ("fit",640,800,240,300),("fit",903,480,301,160),("21:9",960,540,373,160),
+           ("fit",540,960,240,427),("fit",450,1000,240,533)]
+    if args.portrait_only: cases=[case for case in cases if case[4]>160]
+    for index,(aspect,width,height,expected,expected_height) in enumerate(cases):
         (root/"mods"/"state.toml").write_text(f'''format_version = 1
 [[package]]
 id = "pokemon-emerald.enhancement.widescreen"
-version = "0.1.0"
+version = "0.2.0"
 [[feature]]
 package_id = "pokemon-emerald.enhancement.widescreen"
 id = "widescreen"
@@ -70,7 +74,8 @@ aspect = "{aspect}"
                 @callback_type
                 def enum(hwnd,_):
                     pid=W.DWORD();user.GetWindowThreadProcessId(hwnd,C.byref(pid))
-                    if pid.value==process.pid:handles.append(hwnd)
+                    name=C.create_unicode_buffer(128);user.GetClassNameW(hwnd,name,len(name))
+                    if pid.value==process.pid and name.value=="SDL_app":handles.append(hwnd)
                     return True
                 deadline=time.monotonic()+15
                 while not handles:
@@ -94,7 +99,7 @@ aspect = "{aspect}"
         actual=struct.unpack(">II",shot.read_bytes()[16:24])
         result=dict(aspect=aspect,requested=[width,height],client=[client.right,client.bottom],scanout=list(actual),expected=expected)
         results.append(result)
-        if actual!=(expected,160):raise AssertionError(result)
+        if actual!=(expected,expected_height):raise AssertionError(result)
         text=(root/f"resize-{index}.log").read_text()
         if "self_heal_coverage=FULLY_STATIC" not in text:raise AssertionError("coverage report missing")
     (root/"report.json").write_text(json.dumps(results,indent=2)+"\n")

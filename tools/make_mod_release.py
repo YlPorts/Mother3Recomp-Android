@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=repo / "release-stage")
     args = parser.parse_args()
-    package = repo / "mods/preloaded/packages/pokemon-emerald.enhancement.widescreen/0.1.0"
+    package = repo / "mods/preloaded/packages/pokemon-emerald.enhancement.widescreen/0.2.0"
     manifest = tomllib.loads((package / "manifest.toml").read_text(encoding="utf-8"))
     assert manifest["id"] == package.parent.name and manifest["version"] == package.name
     assert manifest["feature"][0]["default_enabled"] is False
@@ -24,7 +24,7 @@ def main():
     archive = args.output / f'{manifest["id"]}-{manifest["version"]}.gbamod'
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
         for name in names:
-            entry = zipfile.ZipInfo(name, date_time=(2026, 9, 14, 0, 0, 0))
+            entry = zipfile.ZipInfo(name, date_time=(2026, 9, 20, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             output.writestr(entry, (package / name).read_bytes())
     with zipfile.ZipFile(archive) as check:

@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
     opts.mod_owns_adaptive_view = true;
     opts.max_view_width = emerald::kMaxViewWidth;
     opts.max_resize_view_width = emerald::kMaxViewWidth;
+    opts.max_resize_view_height = emerald::kMaxViewHeight;
     opts.resize_driven_view = true;
     opts.freely_resizable_window = true;
     opts.extended_view_init = emerald::install_extended_view;

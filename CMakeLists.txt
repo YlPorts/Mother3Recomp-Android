@@ -40,7 +40,7 @@ add_executable(verify_rom_hash tools/verify_rom_hash/main.cpp)
 
 enable_testing()
 add_executable(emerald_extended_view_test
-    tests/extended_view_test.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp)
+    tests/extended_view_test.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp src/emerald_ui_view.cpp)
 target_include_directories(emerald_extended_view_test PRIVATE src "${GBARECOMP_ROOT}/src/gba")
 add_test(NAME emerald_extended_view_test COMMAND emerald_extended_view_test)
 add_executable(emerald_view_capture_check
@@ -67,6 +67,7 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
             src/emerald_extended_view.cpp
             src/emerald_object_view.cpp
             src/mods/emerald_adaptive_view_plugin.cpp
+            src/emerald_ui_view.cpp
             src/mods/emerald_absolute_rtc_plugin.cpp)
     endif()
     add_executable(${TARGET}

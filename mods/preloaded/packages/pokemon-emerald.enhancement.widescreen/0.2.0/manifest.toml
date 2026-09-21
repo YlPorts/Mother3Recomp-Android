@@ -1,6 +1,6 @@
 format_version = 1
 id = "pokemon-emerald.enhancement.widescreen"
-version = "0.1.0"
+version = "0.2.0"
 name = "Emerald Widescreen Experiment"
 author = "mstan"
 description = "Reveal more overworld scenery and live NPCs at the original pixel scale. Experimental: distant objects outside the game's loaded area and special effects are not expanded."
@@ -15,7 +15,7 @@ rom_sha1 = "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
 [[feature]]
 id = "widescreen"
 name = "Overworld Widescreen (Experimental)"
-description = "Expand overworld scenery and live NPC visibility. Battles, transitions and unsupported screens stay centered."
+description = "Expand the overworld in landscape or portrait, with anchored menus and continuous door animations. Battles and unsupported screens stay centered."
 group = "Presentation"
 default_enabled = false
 
@@ -23,7 +23,7 @@ default_enabled = false
 feature = "widescreen"
 id = "aspect"
 label = "Aspect ratio"
-description = "Fit follows the window from native 3:2 through 32:9. Fixed modes keep their chosen aspect ratio."
+description = "Fit follows landscape or portrait windows. Fixed modes keep their chosen aspect ratio."
 type = "choice"
 default = "fit"
 
@@ -42,4 +42,4 @@ label = "32:9"
 
 [[plugin]]
 feature = "widescreen"
-id = "pokemon-emerald.widescreen"
+id = "pokemon-emerald.widescreen.v2"

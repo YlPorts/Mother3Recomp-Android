@@ -61,7 +61,7 @@ def launch(args, name, enabled):
     (root / "mods" / "state.toml").write_text(f'''format_version = 1
 [[package]]
 id = "pokemon-emerald.enhancement.widescreen"
-version = "0.1.0"
+version = "0.2.0"
 [[feature]]
 package_id = "pokemon-emerald.enhancement.widescreen"
 id = "widescreen"
@@ -113,6 +113,29 @@ def read_region(client, region, base, size):
         for off in range(0, size, 8192))
 
 
+def published_ui_rectangles(client):
+    """Native BG0 regions intentionally moved by overworld UI anchoring."""
+    callback = int.from_bytes(read_region(client, "iwram", 0x030022C4, 4), "little") & ~1
+    if callback != 0x08085E5C:
+        return []
+    io = read_region(client, "io", 0x04000000, 24)
+    screen = ((int.from_bytes(io[8:10], "little") >> 8) & 31) * 0x800
+    tiles = read_region(client, "vram", 0x06000000 + screen, 2048)
+    windows = read_region(client, "ewram", 0x02020004, 384)
+    scroll = [((int.from_bytes(io[o:o+2], "little") + 256) & 511) - 256 for o in [16,18]]
+    rectangles = []
+    for offset in range(0, 384, 12):
+        bg, x, y, w, h, palette, tile, data = struct.unpack_from("<6BHI", windows, offset)
+        if bg or not data or not w or not h or x+w > 30 or y+h > 20:
+            continue
+        visible = any(struct.unpack_from("<H", tiles, ((y+ty)*32+x+tx)*2)[0] ==
+                      (palette << 12) | (tile+ty*w+tx) for ty in range(h) for tx in range(w))
+        if visible:
+            rectangles.append((max(0,(x-1)*8)-scroll[0], max(0,(y-1)*8)-scroll[1],
+                               min(240,(x+w+1)*8)-scroll[0], min(160,(y+h+1)*8)-scroll[1]))
+    return rectangles
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("exe", "bios", "rom", "state", "output"):
@@ -121,7 +144,7 @@ def main():
     p.add_argument("--aspect", choices=["fit", "16:9", "21:9", "32:9"], default="32:9")
     p.add_argument("--frames", type=int, default=600)
     p.add_argument("--idle", action="store_true", help="Do not drive the walking route")
-    p.add_argument("--route", choices=["walk", "left", "right", "left-right"], default="walk")
+    p.add_argument("--route", choices=["walk", "left", "right", "left-right", "doors-menu"], default="walk")
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -137,6 +160,9 @@ def main():
         if args.route == "left": route = [(0, 991)]
         if args.route == "right": route = [(0, 1007)]
         if args.route == "left-right": route = [(0, 991), (180, 1007), (580, 991)]
+        if args.route == "doors-menu":
+            route = [(0,1023),(70,959),(170,1023),(200,895),(290,1023),(450,1015),(452,1023)]
+            report.update(ui_anchor_checks=0, door_margin_checks=0)
         route = dict([(0, 1023)] if args.idle else route)
         for frame in range(args.frames):
             if frame in route:
@@ -154,7 +180,25 @@ def main():
                 left = (expected_width - 240)//2
                 center = b"".join(raw[1][(y*expected_width+left)*3:(y*expected_width+left+240)*3]
                                   for y in range(160))
-                diff = sum(a != b for a,b in zip(raw[0], center))
+                rectangles = published_ui_rectangles(clients[0]) if args.route == "doors-menu" else []
+                diff = sum(a != b and not any(x1 <= (i//3)%240 < x2 and y1 <= (i//3)//240 < y2
+                           for x1,y1,x2,y2 in rectangles) for i,(a,b) in enumerate(zip(raw[0], center)))
+                if args.route == "doors-menu":
+                    # Explicit user reproduction: door animations must keep
+                    # scenery visible whenever the native image is visible.
+                    if (80 <= frame <= 140 or 300 <= frame <= 335) and sum(raw[0]) > 100000:
+                        if sum(raw[1][:left*3]) == 0:
+                            raise AssertionError(f"door animation pillarboxed at frame {frame}")
+                        report["door_margin_checks"] += 1
+                    if frame >= 480:
+                        # The known Start-menu interior belongs 8px from the
+                        # right edge. Compare its actual text/cursor pixels.
+                        source = b"".join(raw[0][(y*240+176)*3:(y*240+232)*3] for y in range(8,120))
+                        dest = b"".join(raw[1][(y*expected_width+expected_width-64)*3:
+                                              (y*expected_width+expected_width-8)*3] for y in range(8,120))
+                        if source != dest:
+                            raise AssertionError(f"Start menu failed edge anchor at frame {frame}")
+                        report["ui_anchor_checks"] += 1
                 report["center_different_channels"] += diff
                 report["screenshots"] += 1
                 if diff or frame == 8 or frame % 120 == 0 or frame == args.frames-1:
@@ -162,7 +206,7 @@ def main():
                         png(args.output/f"{name}-{frame:04d}.png", raw[i], shots[i]["w"], 160)
                 if diff:
                     raise AssertionError(f"native center differs at frame {frame}: {diff} channels")
-            if frame in (60, args.frames-1):
+            if frame in (60, args.frames-1) or (args.route == "doors-menu" and frame in (180,335,479)):
                 for region, base, size in [("ewram",0x02000000,0x40000),("iwram",0x03000000,0x8000),
                                            ("vram",0x06000000,0x18000),("pal",0x05000000,0x400),("oam",0x07000000,0x400)]:
                     data = [read_region(c, region, base, size) for c in clients]
