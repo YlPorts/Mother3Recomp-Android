@@ -22,6 +22,7 @@ saves/
 # installs, build sandboxes, large dumps).
 third_party/*
 !third_party/pokeemerald
+!third_party/mother3
 
 # Build output
 build/
@@ -98,3 +99,11 @@ symbols/*_syms.txt
 symbols/*_sections.txt
 variants/*/symbols/*_syms.txt
 variants/*/symbols/*_sections.txt
+
+# Per-machine runtime output (self-heal JIT cache, coverage/miss reports,
+# local keybinds, regen backups).
+recomp_cache/
+recomp_coverage_*.json
+recomp_master_misses_*.toml.frag
+keybinds.ini
+variants/*/generated.bak/

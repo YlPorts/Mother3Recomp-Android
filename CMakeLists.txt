@@ -1,20 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
-project(EmeraldRecomp C CXX)
+project(Mother3Recomp C CXX)
+
+# Windows resource compiler — required to embed the per-variant .ico below.
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ─────────────────────────────────────────────────────────────────────
-# EmeraldRecomp — static recompilation of Pokémon Emerald (GBA).
+# Mother3Recomp — static recompilation of MOTHER 3 (GBA) on gbarecomp.
 #
-# Single-game repo, but built with the same per-variant scaffold as the
-# FRLG / Ruby-Sapphire repos (Sonic3AndKnucklesRecomp pattern) so the
-# layout is uniform across the Gen3 line. Per-variant data lives under
-# variants/<name>/ (game.toml + config/ + symbols/ + generated/ + roms/).
+# Forked from EmeraldRecomp's per-variant scaffold. Per-variant data lives
+# under variants/<name>/ (game.toml + config/ + symbols/ + generated/ + roms/).
+# The emerald_* sources below are inherited from that fork; they are
+# hash-gated to Emerald and inert for MOTHER 3.
 #
-#   Target          Game               ROM       Debug port
-#   EmeraldRecomp   Pokémon Emerald    f3ae0881  19892
+#   Target            Game                     ROM       Debug port
+#   Mother3Recomp     MOTHER 3 (JPN)           4f0f493e  19893
+#   Mother3RecompEN   MOTHER 3 (EN fan patch)  306fb887  19894
 # ─────────────────────────────────────────────────────────────────────
 
 set(GBARECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/gbarecomp"
@@ -23,8 +29,8 @@ set(RECOMP_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/recomp-ui"
     CACHE PATH "Path to the shared recomp-ui checkout")
 set(GBARECOMP_RUNTIME_UI_ROOT "${RECOMP_UI_ROOT}"
     CACHE PATH "recomp-ui root used by the live GBA runtime adapter")
-set(GBARECOMP_ENABLE_MODS ON CACHE BOOL
-    "Build Emerald's built-in mod catalog and trusted-plugin runtime" FORCE)
+set(GBARECOMP_ENABLE_MODS OFF CACHE BOOL
+    "Mod catalog and trusted-plugin runtime — off during bring-up" FORCE)
 
 if(NOT EXISTS "${GBARECOMP_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR
@@ -39,14 +45,6 @@ add_subdirectory("${GBARECOMP_ROOT}" gbarecomp_build EXCLUDE_FROM_ALL)
 add_executable(verify_rom_hash tools/verify_rom_hash/main.cpp)
 
 enable_testing()
-add_executable(emerald_extended_view_test
-    tests/extended_view_test.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp src/emerald_ui_view.cpp)
-target_include_directories(emerald_extended_view_test PRIVATE src "${GBARECOMP_ROOT}/src/gba")
-add_test(NAME emerald_extended_view_test COMMAND emerald_extended_view_test)
-add_executable(emerald_view_capture_check
-    tools/widescreen_capture_check.cpp src/emerald_extended_view.cpp src/emerald_object_view.cpp)
-target_include_directories(emerald_view_capture_check PRIVATE src "${GBARECOMP_ROOT}/src/gba")
-target_link_libraries(emerald_view_capture_check PRIVATE gbarecomp_gba)
 
 # add_gba_variant(<target> <name> <port> <win_title> <game_name> <sha1>
 #                  <crc32>)
@@ -70,8 +68,29 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
             src/emerald_ui_view.cpp
             src/mods/emerald_absolute_rtc_plugin.cpp)
     endif()
+    
+    # Per-variant application icon. Drop an .ico at
+    # variants/<name>/launcher/icon.ico and it gets compiled into a Windows
+    # resource and linked in, so Explorer shows it on the executable.
+    # Resource id 1: Windows uses the lowest-numbered icon as the app icon.
+    # The .rc is compiled in its own OBJECT library so windres does not inherit
+    # the game target's compile definitions (e.g. GBARECOMP_BUILTIN_NAME=
+    # "MOTHER 3 (EN)") and include paths. windres hands those to its gcc
+    # preprocessor through a shell command line, and values/paths with spaces
+    # or parentheses make it fail with "preprocessing failed".
+    set(VARIANT_ICON "${VARIANT_DIR}/launcher/icon.ico")
+    set(VARIANT_ICON_OBJS "")
+    if(WIN32 AND EXISTS "${VARIANT_ICON}")
+        set(VARIANT_RC "${CMAKE_CURRENT_BINARY_DIR}/${NAME}_icon.rc")
+        file(WRITE "${VARIANT_RC}" "1 ICON \"${VARIANT_ICON}\"\n")
+        add_library(${TARGET}_icon OBJECT "${VARIANT_RC}")
+        set(VARIANT_ICON_OBJS $<TARGET_OBJECTS:${TARGET}_icon>)
+        message(STATUS "${NAME}: embedding icon ${VARIANT_ICON}")
+    endif()
+
     add_executable(${TARGET}
         ${VARIANT_GAME_SOURCES}
+        ${VARIANT_ICON_OBJS}
         ${VARIANT_GENERATED})
 
     # Keep generated guest translation units at a bounded optimization and
@@ -164,16 +183,9 @@ if(GBAGAME_RECOMP_UI)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS GBAGAME_RECOMP_UI)
 endif()
 
-# Emerald — USA, sha1 f3ae0881…
-add_gba_variant(EmeraldRecomp emerald 19892 "EmeraldRecomp"
-    "Pokemon Emerald (USA)" "f3ae088181bf583e55daf962a92bb46f4f1d07b7" 0x1F1C08FB)
+# MOTHER 3 — Japan, sha1 4f0f493e…
+add_gba_variant(Mother3Recomp mother3 19893 "Mother3Recomp"
+    "MOTHER 3 (JPN)" "4f0f493e12c2a8c61b2d809af03f7abf87a85776" 0x42AC9CB9)
 
-# Ship the game-owned, disabled-by-default mod catalog beside the executable.
-set(EMERALD_PRELOADED_MODS "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded")
-if(EXISTS "${EMERALD_PRELOADED_MODS}/packages")
-    add_custom_command(TARGET EmeraldRecomp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${EMERALD_PRELOADED_MODS}"
-            "$<TARGET_FILE_DIR:EmeraldRecomp>/mods"
-        COMMENT "Preloading the Emerald mod catalog")
-endif()
+add_gba_variant(Mother3RecompEN mother3en 19894 "Mother3Recomp (EN)"
+    "MOTHER 3 (EN)" "306FB8874533B0FD0796208FAA8BED2DB4AE77FB" 0x8A3BC5A8)

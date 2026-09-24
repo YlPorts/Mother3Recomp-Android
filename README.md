@@ -1,152 +1,93 @@
-# EmeraldRecomp — Pokémon Emerald, Recompiled
+# Mother3Recomp — MOTHER 3, Recompiled
 
-> _This recompilation is a **byproduct of developing
-> [gbarecomp](https://github.com/mstan/gbarecomp)** — the games are the proving ground, the framework is the goal.
-> **These are in-development previews, not finished ports — expect rough
-> edges**, and depth will keep landing over months, not days. My time for any
-> one title is limited, so I ask for your patience. Contributions are welcome —
-> testing, issues, and PRs to the game or framework all help and will
-> accelerate this game's polish. More on the why at:
-> [Recomp + AI: 5 Months Later »](https://1379.tech/recomp-ai-5-months-later/)_
+Static recompilation of **MOTHER 3** (Game Boy Advance) to native PC, built on
+the [`gbarecomp`](https://github.com/mstan/gbarecomp) framework. Forked from
+[EmeraldRecomp](https://github.com/mstan/EmeraldRecomp); the Emerald sources
+and variant still in this tree are inherited scaffolding.
 
-Static recompilation of **Pokémon Emerald** (Game Boy Advance) to native PC, built
-on the [`gbarecomp`](https://github.com/mstan/gbarecomp) framework.
-
-Its Gen3 siblings live in
-[`FireRedLeafGreenRecomp`](https://github.com/mstan/FireRedLeafGreenRecomp) (FireRed + LeafGreen) and
-[`RubySapphireRecomp`](https://github.com/mstan/RubySapphireRecomp) (Ruby + Sapphire).
-
-> ### Status — playable bring-up (v0.0.1), and self-improving
->
-> This is a **static-recompilation base + runner**, not a finished port. Emerald
-> **boots through the BIOS intro to the title screen and into gameplay**. It is
-> **early** — not every code path is statically recompiled yet, and content has
-> not been exhaustively tested. (Emerald's RTC and its larger battle/contest engine
-> are the notable deltas from the other Gen3 games.)
->
-> **It gets better the more you play.** Any code path the static recompiler hasn't
-> covered runs through a built-in **interpreter the first time it's hit**, then is
-> **JIT-compiled to native** (in-process, no toolchain needed) and **remembered on
-> disk** — so the next launch runs it natively from the start. Interpreted once,
-> native ever after; coverage grows toward fully-native as the game is played. See
-> [How it self-improves](#how-it-self-improves).
-
----
-
-## Screenshots
-
-| Pokémon Emerald — title screen | Pokémon Emerald — a wild encounter |
-|---|---|
-| ![Pokémon Emerald — title screen, native recompiled build](docs/screenshots/emerald-title.png) | ![Pokémon Emerald — a wild encounter, running natively](docs/screenshots/emerald-gameplay.png) |
-
-*Native recompiled builds (no emulator), captured running the original ROM.*
-
----
+Goals: a low-latency native build (battle combos are timed to the music),
+a widescreen presentation, and a moddable game through function-level hooks.
 
 ## What "static recompilation" means here
 
-The ROM's **ARM7TDMI machine code is statically translated to native C** — every
-function the game runs becomes a real generated C function. Unlike most recomp
-projects, **the GBA BIOS is recompiled and executed too** (not HLE'd or stubbed),
-so the boot sequence and interrupt/SWI handlers run as real recompiled code. The
-rest of the console — the PPU (graphics), APU + M4A sound engine, DMA, timers, the
-cartridge flash save chip + RTC, and hardware I/O — is modeled by the `gbarecomp`
-runtime.
+The ROM's ARM7TDMI machine code is statically translated to native C — every
+function the game runs becomes a generated C function, and the GBA BIOS is
+recompiled and executed too. The `gbarecomp` runtime models the rest of the
+console: PPU, APU + sound engine, DMA, timers, save chip and I/O.
 
-Only **symbol metadata** (function names, addresses, sizes) from the
-[`pret/pokeemerald`](https://github.com/pret/pokeemerald) decompilation enters this
-repo — never its C source, build output, or toolchain. **The ROM is never
-redistributed**; you supply your own legally-dumped copy.
+Any code path the static recompiler missed runs through the built-in
+interpreter the first time it's hit, is JIT-compiled to native where possible,
+and is cached per ROM in `recomp_cache/<rom-sha1>/`. Misses are also written
+to `recomp_master_misses_<code>.toml.frag` for review.
 
-## ROM
+Only symbol metadata from the
+[Kurausukun/mother3](https://github.com/Kurausukun/mother3) decompilation
+(function names, addresses, sizes) enters the build. The ROM is never
+redistributed; supply your own legally-dumped copy.
 
-| Target          | Game            | ROM (USA) | SHA-1                                      | Debug port |
-|-----------------|-----------------|-----------|-------------------------------------------|------------|
-| `EmeraldRecomp` | Pokémon Emerald | USA       | `f3ae088181bf583e55daf962a92bb46f4f1d07b7` | 19892      |
+## Targets
 
-The runtime **refuses to launch on an unrecognized ROM** — the SHA-1 must match.
+| Target            | Game                          | ROM SHA-1                                  | Debug port |
+|-------------------|-------------------------------|--------------------------------------------|------------|
+| `Mother3Recomp`   | MOTHER 3 (Japan)              | `4f0f493e12c2a8c61b2d809af03f7abf87a85776` | 19893      |
+| `Mother3RecompEN` | MOTHER 3 (English fan patch)  | `306fb8874533b0fd0796208faa8bed2db4ae77fb` | 19894      |
 
-## Quick start
+The runtime refuses to launch on an unrecognized ROM.
 
-1. Download the latest `EmeraldRecomp-windows-x64` zip from
-   [Releases](../../releases) and extract it (or build from source — see below).
-2. Run `EmeraldRecomp`.
-3. Supply your own **legally-obtained** Pokémon Emerald (USA) ROM when prompted.
-   The path is cached next to the exe for future launches.
-4. Play. Early on you may briefly see the interpreter warm up new code paths; once
-   warmed (and cached), they run native.
+ROM locations: `variants/mother3/roms/mother3_jpn.gba` and
+`variants/mother3en/roms/mother3_en.gba` (gitignored).
 
 ## Controls
 
-| GBA button | Keyboard      |
-|------------|---------------|
-| D-Pad      | Arrow keys    |
-| A          | Z             |
-| B          | X             |
-| Start      | Enter         |
-| Select     | Backspace     |
-
+Keyboard and controller bindings are in `keybinds.ini`.
 Save states: **Shift+F1–F9** save to a slot, **F1–F9** load it.
 
-## How it self-improves
+## Audio latency
 
-`gbarecomp`'s coverage is honest: a path that wasn't statically recompiled is
-**bridged through the interpreter** the first time, *loudly*, then healed:
+Audio output uses a small cushion by default so the music stays close to the
+game's timing clock. Tune with environment variables:
 
-- **First hit:** the interpreter runs the missed function (correct, just not
-  native) and the runtime records it.
-- **Heal:** the function is **JIT-compiled to native in-process** via a
-  toolchain-less backend (sljit) — no compiler required on your machine.
-- **Persist:** the healed path is written to a per-ROM cache
-  (`recomp_cache/<rom-sha1>/`), so **the next launch re-JITs it up front** and it
-  runs native from the start.
+| Variable                     | Default | Meaning |
+|------------------------------|---------|---------|
+| `GBARECOMP_AUDIO_TARGET_MS`  | 32      | Steady-state buffer fill (12–250 ms) |
+| `GBARECOMP_AUDIO_SAMPLES`    | 512     | Device callback size in frames (128–4096) |
+| `GBARECOMP_AUDIO_PREROLL_MS` | 0       | Extra startup cushion (0 = start at target) |
+| `GBARECOMP_AUDIO_MAX_MS`     | target+40 | Latency ceiling; a backlog above it is skipped back to target (0 = off) |
+| `GBARECOMP_AUDIO_PROBE`      | off     | `1` logs underruns and buffer fill every 2 s |
 
-The result is a game that converges toward fully-native execution the more it's
-played, and **stays** improved across launches. A handful of instruction patterns
-the JIT can't lower yet stay on the interpreter (precision over recall); those are
-emitter gaps that close over time. Self-improvement is on by default; set
-`GBARECOMP_SELFHEAL_RECOMPILE=0` for a pure-interpreter run.
+If audio crackles, raise `GBARECOMP_AUDIO_TARGET_MS` (try 40–48). The previous
+defaults were 60 / 1024 / 250.
 
 ## Building from source
 
-An opt-in [overworld widescreen experiment](docs/WIDESCREEN_EXPERIMENT.md)
-adds Fit to window, 16:9, 21:9 and 32:9 choices through the Mods catalog. This
-version expands scenery and live NPC visibility. Starting with v0.0.6, Fit also
-fills portrait windows, overworld menus anchor to the viewport edges, and door
-animations retain expanded scenery. Distant object spawning and
-field effects retain the game's original limits; unsupported scenes use the
-original centered view. Mod 0.2.0 is bundled with v0.0.6, disabled by default.
-
 **Prerequisites (Windows):** [MSYS2](https://www.msys2.org/) with the mingw64
-toolchain (`gcc`/`g++`), CMake 3.16+, Ninja, and SDL2 (mingw64 package). Builds
-are invoked from PowerShell with the mingw64 toolchain on `PATH`.
-
-**1. Clone this repo next to `gbarecomp`** (the game repo builds against the
-sibling engine checkout on `main`):
+toolchain, CMake 3.20+, Ninja, and SDL2 (mingw64 package). Run builds from
+PowerShell with mingw64 on `PATH`.
 
 ```
-git clone https://github.com/mstan/gbarecomp.git
-git clone https://github.com/mstan/EmeraldRecomp.git
-cd EmeraldRecomp
-```
-
-**2. Supply your ROM** at `variants/emerald/roms/emerald_usa.gba` (SHA-1 above).
-ROMs are gitignored and never committed.
-
-**3. Recompile + build.** The committed `variants/emerald/symbols/*.toml` are the
-importer output, so you can regenerate the C and build directly:
-
-```
-# from PowerShell, mingw64 on PATH
-gba_recompile --rom variants/emerald/roms/emerald_usa.gba \
-              --config variants/emerald/symbols/emerald_usa.toml \
-              --out variants/emerald/generated
+git clone --recurse-submodules <this repo> Mother3Recomp
+cd Mother3Recomp
 cmake -S . -B build -G Ninja
-cmake --build build --target EmeraldRecomp
+cmake --build build --target Mother3RecompEN     # or Mother3Recomp
 ```
 
-(`gba_recompile` is built from the `gbarecomp` checkout; see that repo's README.)
-The recompiled translation unit is large — expect a multi-minute compile.
+Regenerating the recompiled C (only after recompiler or config changes):
+
+```
+cd variants/mother3en
+gba_recompile --rom roms/mother3_en.gba \
+    --config game.toml \
+    --config symbols/mother3_jpn.toml \
+    --symbols symbols/imported_symbols.tsv \
+    --data-symbols symbols/imported_data_symbols.tsv \
+    --out generated --max-functions 65536
+```
+
+`--config` order matters: `game.toml` is the base and wins every conflict
+(see `gbarecomp/docs/SYMBOL_OVERLAY.md`).
+
+`gba_recompile` is built from the `gbarecomp` submodule. The generated corpus
+is large — expect a multi-minute compile.
 
 ## License
 
@@ -155,18 +96,8 @@ components retain their own licenses.
 
 ## Legal
 
-This project contains **no copyrighted ROM data, no Nintendo BIOS, and no decomp
-source** — only original recompiler/runtime code and symbol metadata. **You must
-supply your own legally-dumped ROM** (and BIOS, where the runtime requires one).
-Pokémon and Emerald are trademarks of Nintendo / Game Freak / The Pokémon Company;
-this project is an unaffiliated, non-commercial preservation and research effort.
-
----
-
-<p align="center">
-  <sub><b>R.A.I.D. — Retro AI Development</b> · a Discord for AI-assisted retro reverse-engineering, decomp &amp; recomp</sub>
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/Ad9BwSzctP"><img src=".github/raid-discord.png" alt="Join the Retro AI Development (R.A.I.D.) Discord" width="200"></a>
-</p>
+This project contains no copyrighted ROM data, no Nintendo BIOS, and no decomp
+source — only recompiler/runtime code and symbol metadata. You must supply your
+own legally-dumped ROM and BIOS. MOTHER 3 is a trademark of Nintendo / HAL
+Laboratory / Shigesato Itoi; this is an unaffiliated, non-commercial
+preservation and research project.
