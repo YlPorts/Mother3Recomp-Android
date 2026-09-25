@@ -61,3 +61,12 @@ ext.gbaGame = [
 ]
 
 apply from: new File(engineRoot, "platform/android/gbarecomp-app.gradle")
+
+
+/*
+ * Game-local Android diagnostics layer. The shared gbarecomp shell remains the
+ * base; we only add a launcher Activity that surfaces android-runtime.log after
+ * a failed native launch.
+ */
+android.sourceSets.main.manifest.srcFile file("src/main/AndroidManifest.xml")
+android.sourceSets.main.java.srcDir file("src/main/java")
