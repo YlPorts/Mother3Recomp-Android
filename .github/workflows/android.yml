@@ -48,6 +48,9 @@ jobs:
             https://github.com/mstan/arm-recomp-core.git
           git -C gbarecomp submodule update --init --depth=1 \
             external/arm-recomp-core platform/android/third_party/SDL
+          # We use the repository-level Gradle install, not SDL's sample
+          # project's wrapper. Removing it avoids validating an unused jar.
+          rm -f gbarecomp/platform/android/third_party/SDL/android-project/gradle/wrapper/gradle-wrapper.jar
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
