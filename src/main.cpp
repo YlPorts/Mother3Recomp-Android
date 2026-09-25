@@ -1,6 +1,7 @@
 // MOTHER 3 recomp runner — desktop and Android entry points.
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -67,6 +68,15 @@ int mother3_main(int argc, char** argv) {
     mobile.game_config = GBARECOMP_DEFAULT_GAME_CONFIG;
     mobile.program_name = GBARECOMP_PROGRAM_NAME;
     const bool on_mobile = gbarecomp::mobile_prepare_process(args, mobile);
+
+#if defined(__ANDROID__) && defined(MOTHER3_BOOTSTRAP_INTERP)
+    // Public APKs intentionally omit ROM-derived generated C/C++. With no
+    // static cart dispatch table, drive the main guest CPU through gbarecomp's
+    // reference interpreter instead of entering runtime_dispatch() at PC=0.
+    // A private build that regenerated generated/dispatch_table.cpp does not
+    // define MOTHER3_BOOTSTRAP_INTERP and therefore uses the native recompiler.
+    setenv("GBARECOMP_FORCE_INTERP", "1", 1);
+#endif
 
     gbarecomp::RunOptions opts;
     opts.builtin_game_name = GBARECOMP_BUILTIN_NAME;
