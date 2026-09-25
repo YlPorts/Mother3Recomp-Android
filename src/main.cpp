@@ -1,5 +1,6 @@
 // MOTHER 3 recomp runner — desktop and Android entry points.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -68,6 +69,15 @@ int mother3_main(int argc, char** argv) {
     mobile.game_config = GBARECOMP_DEFAULT_GAME_CONFIG;
     mobile.program_name = GBARECOMP_PROGRAM_NAME;
     const bool on_mobile = gbarecomp::mobile_prepare_process(args, mobile);
+
+#if defined(__ANDROID__)
+    // The Android shell in this gbarecomp revision appends --no-launcher, but
+    // this runtime revision does not expose that CLI option. Android already
+    // bypasses the desktop preboot launcher below, so simply remove the stale
+    // compatibility flag before run_game() parses argv.
+    args.erase(std::remove(args.begin(), args.end(), std::string("--no-launcher")),
+               args.end());
+#endif
 
 #if defined(__ANDROID__) && defined(MOTHER3_BOOTSTRAP_INTERP)
     // Public APKs intentionally omit ROM-derived generated C/C++. With no
