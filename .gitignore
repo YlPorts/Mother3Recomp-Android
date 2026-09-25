@@ -107,3 +107,7 @@ recomp_coverage_*.json
 recomp_master_misses_*.toml.frag
 keybinds.ini
 variants/*/generated.bak/
+
+# Android/Gradle local output
+android/.gradle/
+android/local.properties

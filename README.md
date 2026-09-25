@@ -58,6 +58,55 @@ game's timing clock. Tune with environment variables:
 If audio crackles, raise `GBARECOMP_AUDIO_TARGET_MS` (try 40–48). The previous
 defaults were 60 / 1024 / 250.
 
+## Android
+
+The `android-port` branch contains a native Android target built on the same
+`gbarecomp` runtime. It is **not a GBA emulator wrapper**: the Android app
+loads `libmain.so`, SDL2 and the shared GBA runtime directly through the NDK.
+
+The public APK contains no Nintendo ROM or BIOS. On first launch it opens the
+Android setup screen, where the player selects their own files. Both are
+verified by size and SHA-1 before they are copied into app-private storage.
+
+### Public/bootstrap APK
+
+The repository intentionally does not commit `variants/*/generated/*.cpp`
+because those files are generated from a ROM. A clean checkout therefore builds
+a bootstrap APK whose missing static dispatch entries use gbarecomp's reference
+interpreter bridge. This is useful for bring-up and diagnostics but is not the
+performance target.
+
+English fan-translation build (default):
+
+```bash
+cd android
+gradle :app:assembleDebug -Pmother3Variant=en -PgbaAbis=arm64-v8a
+```
+
+Japanese build:
+
+```bash
+cd android
+gradle :app:assembleDebug -Pmother3Variant=jpn -PgbaAbis=arm64-v8a
+```
+
+### Private native-recompiled APK
+
+For a personal build using your own verified ROM and BIOS, the helper script
+regenerates the MOTHER 3 and BIOS C/C++ corpora locally, then compiles them into
+the ARM64 APK:
+
+```bash
+tools/build-android.sh \
+  --variant en \
+  --rom /path/to/mother3_en.gba \
+  --bios /path/to/gba_bios.bin
+```
+
+The generated sources, ROM, BIOS and private APK remain ignored/local. The
+Android shared shell also provides touch controls, immersive fullscreen,
+safe-area handling, suspend/resume state support and external gamepad input.
+
 ## Building from source
 
 **Prerequisites (Windows):** [MSYS2](https://www.msys2.org/) with the mingw64
