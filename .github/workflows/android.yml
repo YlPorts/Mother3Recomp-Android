@@ -33,8 +33,12 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [en, jpn]
     env:
-      MOTHER3_VARIANT: ${{ github.event_name == 'workflow_dispatch' && inputs.variant || 'en' }}
+      MOTHER3_VARIANT: ${{ matrix.variant }}
 
     steps:
       - name: Checkout
