@@ -31,8 +31,8 @@ ext.gbaGame = [
     applicationId  : english
         ? "com.ylports.mother3recomp.en"
         : "com.ylports.mother3recomp",
-    versionCode    : 2,
-    versionName    : "0.1.1-diag",
+    versionCode    : 3,
+    versionName    : "0.1.2-diag",
     title          : title,
     romLabel       : english
         ? "MOTHER 3 English fan-translation ROM"
