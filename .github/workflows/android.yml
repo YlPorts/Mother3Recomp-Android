@@ -1,6 +1,8 @@
 name: Android APK
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [android-port]
     paths:
