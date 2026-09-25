@@ -3,6 +3,11 @@ name: Android APK
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "android/**"
+      - "src/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/android.yml"
   push:
     branches: [android-port]
     paths:
