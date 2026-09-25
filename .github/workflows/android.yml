@@ -1,0 +1,80 @@
+name: Android APK
+
+on:
+  push:
+    branches: [android-port]
+    paths:
+      - "android/**"
+      - "src/**"
+      - "variants/**"
+      - "gbarecomp"
+      - "recomp-ui"
+      - "CMakeLists.txt"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "MOTHER 3 variant"
+        required: true
+        default: "en"
+        type: choice
+        options:
+          - en
+          - jpn
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MOTHER3_VARIANT: ${{ github.event_name == 'workflow_dispatch' && inputs.variant || 'en' }}
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install native toolchain
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" \
+                     "ndk;27.1.12297006" "cmake;3.22.1"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build ARM64 debug APK
+        working-directory: android
+        run: |
+          gradle :app:assembleDebug \
+            -Pmother3Variant="${MOTHER3_VARIANT}" \
+            -PgbaAbis=arm64-v8a \
+            -PgbaNativeJobs=2 \
+            --stacktrace
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "out/Mother3Recomp-${MOTHER3_VARIANT}-android-arm64-debug.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mother3Recomp-${{ env.MOTHER3_VARIANT }}-android-arm64
+          path: out/*.apk
+          if-no-files-found: error
