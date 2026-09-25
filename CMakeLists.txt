@@ -52,11 +52,13 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
     # a copyrighted ROM.  A public checkout therefore boots through the
     # runtime's interpreter bridge.  Private builds that regenerate the corpus
     # automatically replace this empty table with generated/dispatch_table.cpp.
+    set(VARIANT_BOOTSTRAP_INTERP OFF)
     if(NOT EXISTS "${VARIANT_DIR}/generated/dispatch_table.cpp")
         list(APPEND VARIANT_GAME_SOURCES src/empty_dispatch_table.cpp)
+        set(VARIANT_BOOTSTRAP_INTERP ON)
         message(WARNING
-            "${NAME}: no generated dispatch table; building interpreter-bridge "
-            "bootstrap. Regenerate the corpus for native recompilation speed.")
+            "${NAME}: no generated dispatch table; building whole-program "
+            "interpreter bootstrap. Regenerate the corpus for native recompilation speed.")
     endif()
 
     set(VARIANT_ICON "${VARIANT_DIR}/launcher/icon.ico")
@@ -102,6 +104,10 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
         gbarecomp_gba
         gbarecomp_armv4t
         "-Wl,--end-group")
+
+    if(VARIANT_BOOTSTRAP_INTERP)
+        target_compile_definitions(${TARGET} PRIVATE MOTHER3_BOOTSTRAP_INTERP=1)
+    endif()
 
     target_compile_definitions(${TARGET} PRIVATE
         GBARECOMP_DEFAULT_DEBUG_PORT=${PORT}
